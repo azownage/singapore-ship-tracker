@@ -18,12 +18,47 @@ from urllib.parse import quote
 from typing import List, Dict, Any
 import pickle
 import os
+import os
 
 st.set_page_config(
     page_title="Singapore Ship Risk Tracker",
     page_icon="🚢",
     layout="wide"
 )
+
+# Load maritime zones data (Anchorages, Channels, Fairways)
+@st.cache_data
+def load_maritime_zones():
+    """Load anchorages, channels, and fairways from Excel file"""
+    try:
+        # Try multiple possible locations
+        possible_paths = [
+            '/mnt/user-data/uploads/Anchorages__Channels__Fairways_Details.xlsx',
+            'Anchorages__Channels__Fairways_Details.xlsx',
+            '/home/claude/Anchorages__Channels__Fairways_Details.xlsx'
+        ]
+        
+        zones_file = None
+        for path in possible_paths:
+            if os.path.exists(path):
+                zones_file = path
+                break
+        
+        if zones_file is None:
+            return None, None, None
+        
+        # Read all three sheets
+        anchorages_df = pd.read_excel(zones_file, sheet_name='Anchorages')
+        channels_df = pd.read_excel(zones_file, sheet_name='Channels')
+        fairways_df = pd.read_excel(zones_file, sheet_name='Fairways')
+        
+        return anchorages_df, channels_df, fairways_df
+    except Exception as e:
+        st.error(f"Could not load maritime zones: {e}")
+        return None, None, None
+
+# Load zones
+anchorages_df, channels_df, fairways_df = load_maritime_zones()
 
 # File-based persistent storage
 STORAGE_FILE = "ship_data_cache.pkl"
@@ -613,6 +648,12 @@ show_severe = st.sidebar.checkbox("Severe only (Legal Overall = 2)", value=False
 show_warning = st.sidebar.checkbox("Warning+ (Legal Overall ≥ 1)", value=False)
 show_sanctioned = st.sidebar.checkbox("UN/OFAC sanctions only", value=False)
 
+# Maritime Zones Overlay
+st.sidebar.header("🗺️ Maritime Zones")
+show_anchorages = st.sidebar.checkbox("Show Anchorages", value=False)
+show_channels = st.sidebar.checkbox("Show Channels", value=False)
+show_fairways = st.sidebar.checkbox("Show Fairways", value=False)
+
 # Vessel Type Filter
 st.sidebar.header("🚢 Vessel Type Filter")
 vessel_types = st.sidebar.multiselect(
@@ -766,7 +807,89 @@ def display_data(df):
         
         layers = []
         
-        # Single polygon layer - no borders, shapes scale with zoom naturally
+        # Add maritime zone layers if enabled
+        if show_anchorages and anchorages_df is not None:
+            # Group coordinates by anchorage name to create polygons
+            anchorage_polygons = []
+            for name in anchorages_df['Anchorage Name'].unique():
+                coords = anchorages_df[anchorages_df['Anchorage Name'] == name][
+                    ['Decimal Longitude', 'Decimal Latitude']
+                ].values.tolist()
+                if len(coords) >= 3:  # Need at least 3 points for polygon
+                    anchorage_polygons.append({
+                        'name': name,
+                        'polygon': coords,
+                        'color': [0, 255, 255, 80]  # Cyan with transparency
+                    })
+            
+            if anchorage_polygons:
+                anchorage_layer = pdk.Layer(
+                    'PolygonLayer',
+                    data=anchorage_polygons,
+                    get_polygon='polygon',
+                    get_fill_color='color',
+                    get_line_color=[0, 255, 255, 200],
+                    line_width_min_pixels=2,
+                    pickable=True,
+                    auto_highlight=True,
+                )
+                layers.append(anchorage_layer)
+        
+        if show_channels and channels_df is not None:
+            # Group coordinates by channel name
+            channel_polygons = []
+            for name in channels_df['Channel Name'].unique():
+                coords = channels_df[channels_df['Channel Name'] == name][
+                    ['Decimal Longitude', 'Decimal Latitude']
+                ].values.tolist()
+                if len(coords) >= 3:
+                    channel_polygons.append({
+                        'name': name,
+                        'polygon': coords,
+                        'color': [255, 255, 0, 80]  # Yellow with transparency
+                    })
+            
+            if channel_polygons:
+                channel_layer = pdk.Layer(
+                    'PolygonLayer',
+                    data=channel_polygons,
+                    get_polygon='polygon',
+                    get_fill_color='color',
+                    get_line_color=[255, 255, 0, 200],
+                    line_width_min_pixels=2,
+                    pickable=True,
+                    auto_highlight=True,
+                )
+                layers.append(channel_layer)
+        
+        if show_fairways and fairways_df is not None:
+            # Group coordinates by fairway name
+            fairway_polygons = []
+            for name in fairways_df['Fairway Name'].unique():
+                coords = fairways_df[fairways_df['Fairway Name'] == name][
+                    ['Decimal Longitude', 'Decimal Latitude']
+                ].values.tolist()
+                if len(coords) >= 3:
+                    fairway_polygons.append({
+                        'name': name,
+                        'polygon': coords,
+                        'color': [255, 165, 0, 80]  # Orange with transparency
+                    })
+            
+            if fairway_polygons:
+                fairway_layer = pdk.Layer(
+                    'PolygonLayer',
+                    data=fairway_polygons,
+                    get_polygon='polygon',
+                    get_fill_color='color',
+                    get_line_color=[255, 165, 0, 200],
+                    line_width_min_pixels=2,
+                    pickable=True,
+                    auto_highlight=True,
+                )
+                layers.append(fairway_layer)
+        
+        # Single polygon layer for all vessels - no borders
         if len(df_filtered) > 0:
             polygon_layer = pdk.Layer(
                 'PolygonLayer',
@@ -798,62 +921,78 @@ def display_data(df):
     with table_placeholder:
         st.subheader("📋 S&P Compliance Screening Results")
         
-        # Create columns for table with buttons
-        cols_for_table = st.columns([6, 1])  # Table takes 6/7, buttons take 1/7
+        available_cols = list(df_filtered.columns)
+        display_cols = []
         
-        with cols_for_table[0]:
-            available_cols = list(df_filtered.columns)
-            display_cols = []
-            
-            for col in ['name', 'type_name', 'nav_status_name', 'length', 'width', 'imo', 'speed', 'destination', 'legal_overall',
-                        'ship_un_sanction', 'ship_ofac_sanction', 'dark_activity', 'flag_disputed',
-                        'port_call_3m', 'owner_un', 'owner_ofac']:
-                if col in available_cols:
-                    display_cols.append(col)
-            
-            df_display = df_filtered[display_cols].copy()
-            
-            # Format S&P values (2 = Severe, 1 = Warning, 0 = OK)
-            def format_sp_value(val):
-                if pd.isna(val):
-                    return '-'
-                elif val == 2:
-                    return '🔴'  # Severe
-                elif val == 1:
-                    return '🟡'  # Warning
-                else:
-                    return '✅'  # OK
-            
-            for col in ['legal_overall', 'ship_un_sanction', 'ship_ofac_sanction', 'dark_activity',
-                        'flag_disputed', 'port_call_3m', 'owner_un', 'owner_ofac']:
-                if col in df_display.columns:
-                    df_display[col] = df_display[col].apply(format_sp_value)
-            
-            st.dataframe(df_display, use_container_width=True, hide_index=True, height=600)
+        for col in ['name', 'type_name', 'nav_status_name', 'speed', 'legal_overall',
+                    'ship_un_sanction', 'ship_ofac_sanction']:
+            if col in available_cols:
+                display_cols.append(col)
         
-        with cols_for_table[1]:
-            st.write("**View**")
-            st.write("") # Spacing for alignment
-            
-            # Add a button for each row
+        # Format S&P values
+        def format_sp_value(val):
+            if pd.isna(val):
+                return '-'
+            elif val == 2:
+                return '🔴'
+            elif val == 1:
+                return '🟡'
+            else:
+                return '✅'
+        
+        # Create header row
+        header_cols = st.columns([2, 1.5, 2, 0.8, 1, 0.8, 0.8, 0.6])
+        header_cols[0].markdown("**Name**")
+        header_cols[1].markdown("**Type**")
+        header_cols[2].markdown("**Status**")
+        header_cols[3].markdown("**Speed**")
+        header_cols[4].markdown("**Legal**")
+        header_cols[5].markdown("**UN**")
+        header_cols[6].markdown("**OFAC**")
+        header_cols[7].markdown("**View**")
+        
+        st.markdown("---")
+        
+        # Create scrollable container for rows
+        container = st.container(height=500)
+        
+        with container:
             for idx, row in df_filtered.iterrows():
-                if st.button("🗺️", key=f"view_{row['mmsi']}", help=f"View {row['name']} on map"):
+                cols = st.columns([2, 1.5, 2, 0.8, 1, 0.8, 0.8, 0.6])
+                
+                cols[0].text(row['name'][:25] + '...' if len(str(row['name'])) > 25 else row['name'])
+                cols[1].text(row.get('type_name', 'Unknown'))
+                cols[2].text(row.get('nav_status_name', 'Unknown')[:20])
+                cols[3].text(f"{row['speed']:.1f}")
+                cols[4].text(format_sp_value(row.get('legal_overall', 0)))
+                cols[5].text(format_sp_value(row.get('ship_un_sanction', 0)))
+                cols[6].text(format_sp_value(row.get('ship_ofac_sanction', 0)))
+                
+                if cols[7].button("🗺️", key=f"map_{row['mmsi']}", help=f"View {row['name']}"):
                     st.session_state.selected_vessel = row['mmsi']
                     st.rerun()
+        
+        st.markdown("---")
         
         # Show currently centered vessel info
         if st.session_state.selected_vessel is not None:
             selected = df_filtered[df_filtered['mmsi'] == st.session_state.selected_vessel]
             if not selected.empty:
-                st.success(f"🎯 Map centered on: **{selected.iloc[0]['name']}** (Zoom: 15)")
-                if st.button("↩️ Reset to Full View", type="secondary"):
-                    st.session_state.selected_vessel = None
-                    st.rerun()
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.success(f"🎯 Map centered on: **{selected.iloc[0]['name']}** (Zoom: 15)")
+                with col2:
+                    if st.button("↩️ Reset View", type="secondary"):
+                        st.session_state.selected_vessel = None
+                        st.rerun()
             else:
-                st.warning("⚠️ Selected vessel not visible with current filters.")
-                if st.button("↩️ Reset to Full View", type="secondary"):
-                    st.session_state.selected_vessel = None
-                    st.rerun()
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.warning("⚠️ Selected vessel not visible with current filters.")
+                with col2:
+                    if st.button("↩️ Reset View", type="secondary"):
+                        st.session_state.selected_vessel = None
+                        st.rerun()
     
     save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
     
@@ -940,6 +1079,15 @@ Common statuses:
 • Restricted maneuverability (limited)
 • Engaged in fishing (fishing ops)
 • Aground (run aground)
+""")
+
+st.sidebar.markdown("### 🗺️ Maritime Zones Colors")
+st.sidebar.caption("""
+**Anchorages:** 🟦 Cyan zones
+**Channels:** 🟨 Yellow zones
+**Fairways:** 🟧 Orange zones
+
+Toggle zones on/off above to overlay on map.
 """)
 
 st.sidebar.markdown("---")
