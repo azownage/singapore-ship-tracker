@@ -1,6 +1,7 @@
 """
 Singapore AIS Tracker with S&P Maritime Risk Intelligence
 Real-time vessel tracking with compliance and risk indicators
+Enhanced with persistent storage and caching
 """
 
 import streamlit as st
@@ -15,7 +16,8 @@ import time
 import requests
 from urllib.parse import quote
 from typing import List, Dict, Any
-import base64
+import pickle
+import os
 
 st.set_page_config(
     page_title="Singapore Ship Risk Tracker",
@@ -23,24 +25,71 @@ st.set_page_config(
     layout="wide"
 )
 
+# File-based persistent storage
+STORAGE_FILE = "ship_data_cache.pkl"
+RISK_DATA_FILE = "risk_data_cache.pkl"
+
+def load_cache():
+    """Load cached ship and risk data from disk"""
+    ship_cache = {}
+    risk_cache = {}
+    
+    if os.path.exists(STORAGE_FILE):
+        try:
+            with open(STORAGE_FILE, 'rb') as f:
+                ship_cache = pickle.load(f)
+        except:
+            pass
+    
+    if os.path.exists(RISK_DATA_FILE):
+        try:
+            with open(RISK_DATA_FILE, 'rb') as f:
+                risk_cache = pickle.load(f)
+        except:
+            pass
+    
+    return ship_cache, risk_cache
+
+def save_cache(ship_cache, risk_cache):
+    """Save ship and risk data to disk"""
+    try:
+        with open(STORAGE_FILE, 'wb') as f:
+            pickle.dump(ship_cache, f)
+        with open(RISK_DATA_FILE, 'wb') as f:
+            pickle.dump(risk_cache, f)
+    except Exception as e:
+        st.warning(f"Could not save cache: {e}")
+
+# Initialize session state for persistent storage
+if 'ship_static_cache' not in st.session_state:
+    ship_cache, risk_cache = load_cache()
+    st.session_state.ship_static_cache = ship_cache
+    st.session_state.risk_data_cache = risk_cache
+    st.session_state.last_save = time.time()
+
 # S&P Maritime API Integration
 class SPMaritimeAPI:
     def __init__(self, username: str, password: str):
         self.username = username
         self.password = password
         self.base_url = "https://maritimewebservices.ihs.com/MaritimeWCF/APSShipService.svc/RESTFul/GetShipsByIHSLRorIMONumbersAll"
-        self._cache = {}
     
     def get_ship_risk_data(self, imo_numbers: List[str]) -> Dict[str, Dict]:
-        """Get risk indicators for multiple IMO numbers"""
+        """Get risk indicators for multiple IMO numbers (with caching)"""
         if not imo_numbers:
             return {}
         
-        # Check cache first
-        uncached_imos = [imo for imo in imo_numbers if imo not in self._cache]
+        # Use session state cache
+        cache = st.session_state.risk_data_cache
+        
+        # Check which IMOs we already have
+        uncached_imos = [imo for imo in imo_numbers if imo not in cache]
         
         if not uncached_imos:
-            return {imo: self._cache[imo] for imo in imo_numbers}
+            # All data in cache, no API call needed!
+            return {imo: cache[imo] for imo in imo_numbers}
+        
+        st.info(f"🔍 Fetching risk data for {len(uncached_imos)} new vessels from S&P API...")
         
         try:
             # Batch API call (max 100 per request)
@@ -66,7 +115,8 @@ class SPMaritimeAPI:
                                 detail = ship['APSShipDetail']
                                 imo = str(detail.get('IHSLRorIMOShipNo', ''))
                                 
-                                self._cache[imo] = {
+                                # Cache this result permanently
+                                cache[imo] = {
                                     'ship_name': detail.get('ShipName', ''),
                                     'ship_status': detail.get('ShipStatus', ''),
                                     'flag_disputed': detail.get('ShipFlagDisputed', '0') == '1',
@@ -79,16 +129,23 @@ class SPMaritimeAPI:
                                     'ship_manager': detail.get('ShipManager', ''),
                                     'registered_owner': detail.get('RegisteredOwner', ''),
                                     'technical_manager': detail.get('TechnicalManager', ''),
-                                    'risk_score': self._calculate_risk_score(detail)
+                                    'risk_score': self._calculate_risk_score(detail),
+                                    'cached_at': datetime.now().isoformat()
                                 }
                 
                 time.sleep(0.5)  # Rate limiting
+            
+            # Save cache to disk
+            st.session_state.risk_data_cache = cache
+            save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
+            
+            st.success(f"✅ Cached risk data for {len(uncached_imos)} vessels")
                 
         except Exception as e:
-            st.warning(f"⚠️ S&P API error: {str(e)}")
+            st.error(f"⚠️ S&P API error: {str(e)}")
         
-        # Return combined cache
-        return {imo: self._cache.get(imo, {}) for imo in imo_numbers}
+        # Return combined cache (old + new)
+        return {imo: cache.get(imo, {}) for imo in imo_numbers}
     
     def _calculate_risk_score(self, detail: Dict) -> int:
         """Calculate risk score (0-100)"""
@@ -109,7 +166,7 @@ class SPMaritimeAPI:
         
         return min(score, 100)
 
-# AIS Tracker
+# AIS Tracker with persistent storage
 class AISTracker:
     def __init__(self):
         self.ships = defaultdict(lambda: {
@@ -135,10 +192,10 @@ class AISTracker:
         
         return [0, 255, 0, 180]  # Green - Low/No risk
     
-    async def collect_data(self, duration=30):
+    async def collect_data(self, duration=30, api_key="e38db7cbbfbd792829696a346f41a6630d74c53d"):
         async with websockets.connect("wss://stream.aisstream.io/v0/stream") as ws:
             subscription = {
-                "APIKey": "e38db7cbbfbd792829696a346f41a6630d74c53d",
+                "APIKey": api_key,
                 "BoundingBoxes": [[[1.22, 103.80], [1.32, 103.92]]],
                 "FilterMessageTypes": ["PositionReport", "ShipStaticData"]
             }
@@ -172,7 +229,8 @@ class AISTracker:
             'sog': position_data.get('Sog', 0),
             'cog': position_data.get('Cog', 0),
             'nav_status': position_data.get('NavigationalStatus', 15),
-            'ship_name': metadata.get('ShipName', 'Unknown')
+            'ship_name': metadata.get('ShipName', 'Unknown'),
+            'timestamp': datetime.now().isoformat()
         }
     
     def process_static(self, ais_message):
@@ -183,15 +241,28 @@ class AISTracker:
             return
         
         dimension = static_data.get('Dimension', {})
+        imo = str(static_data.get('ImoNumber', 0))
         
-        self.ships[mmsi]['static_data'] = {
+        # Store in session state for persistence
+        static_info = {
             'name': static_data.get('Name', 'Unknown'),
-            'imo': str(static_data.get('ImoNumber', 0)),
+            'imo': imo,
             'type': static_data.get('Type'),
             'length': dimension.get('A', 0) + dimension.get('B', 0),
             'destination': static_data.get('Destination', 'Unknown'),
-            'call_sign': static_data.get('CallSign', '')
+            'call_sign': static_data.get('CallSign', ''),
+            'cached_at': datetime.now().isoformat()
         }
+        
+        self.ships[mmsi]['static_data'] = static_info
+        
+        # Store permanently in session state
+        st.session_state.ship_static_cache[str(mmsi)] = static_info
+        
+        # Periodic save to disk
+        if time.time() - st.session_state.last_save > 60:  # Save every minute
+            save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
+            st.session_state.last_save = time.time()
     
     def get_dataframe_with_risk(self, sp_api: SPMaritimeAPI) -> pd.DataFrame:
         """Get dataframe with risk indicators"""
@@ -200,7 +271,11 @@ class AISTracker:
         # Collect all valid ships
         for mmsi, ship_data in self.ships.items():
             pos = ship_data.get('latest_position')
-            static = ship_data.get('static_data') or {}
+            
+            # Try current static data, fall back to cached
+            static = ship_data.get('static_data')
+            if not static:
+                static = st.session_state.ship_static_cache.get(str(mmsi), {})
             
             # Skip if no position data or invalid coordinates
             if not pos or pos.get('latitude') is None or pos.get('longitude') is None:
@@ -226,6 +301,7 @@ class AISTracker:
                 'destination': (static.get('destination') or 'Unknown').strip(),
                 'call_sign': static.get('call_sign', ''),
                 'risk_score': 0,
+                'has_static': bool(static.get('name')),
                 'color': self.get_ship_color(ship_type, 0)
             })
         
@@ -238,9 +314,8 @@ class AISTracker:
         valid_imos = [str(imo) for imo in df['imo'].unique() if imo and imo != '0']
         
         if valid_imos and sp_api:
-            # Get risk data from S&P API
-            with st.spinner('🔍 Checking S&P Maritime risk indicators...'):
-                risk_data = sp_api.get_ship_risk_data(valid_imos)
+            # Get risk data (uses cache, minimal API calls)
+            risk_data = sp_api.get_ship_risk_data(valid_imos)
             
             # Merge risk data
             for idx, row in df.iterrows():
@@ -265,23 +340,49 @@ class AISTracker:
 st.title("🚢 Singapore Ship Risk Tracker")
 st.markdown("Real-time vessel tracking with S&P Maritime compliance indicators")
 
-# Sidebar
+# Sidebar - Get credentials from secrets
 st.sidebar.header("⚙️ Configuration")
 
-# API Configuration
-with st.sidebar.expander("🔐 S&P Maritime API", expanded=False):
-    sp_username = st.text_input("Username", value="", type="default")
-    sp_password = st.text_input("Password", value="", type="password")
+# Try to load from Streamlit secrets first, otherwise use input
+try:
+    sp_username = st.secrets["sp_maritime"]["username"]
+    sp_password = st.secrets["sp_maritime"]["password"]
+    ais_api_key = st.secrets.get("aisstream", {}).get("api_key", "e38db7cbbfbd792829696a346f41a6630d74c53d")
+    st.sidebar.success("🔐 Using credentials from secrets")
+except:
+    # Fallback to manual input (hidden by default)
+    with st.sidebar.expander("🔐 S&P Maritime API (Admin Only)", expanded=False):
+        st.warning("⚠️ Credentials should be in Streamlit Secrets")
+        sp_username = st.text_input("Username", type="password", help="Enter S&P username")
+        sp_password = st.text_input("Password", type="password", help="Enter S&P password")
+    ais_api_key = "e38db7cbbfbd792829696a346f41a6630d74c53d"
 
 # Tracking settings
 duration = st.sidebar.slider("AIS collection time (seconds)", 10, 60, 30)
 enable_risk_check = st.sidebar.checkbox("Enable S&P risk checking", value=True)
 auto_refresh = st.sidebar.checkbox("Auto-refresh every 60s", value=False)
 
+# Cache stats
+st.sidebar.header("💾 Cache Statistics")
+st.sidebar.info(f"""
+**Static Data Cache:** {len(st.session_state.ship_static_cache)} vessels
+**Risk Data Cache:** {len(st.session_state.risk_data_cache)} vessels
+
+Cached data is reused to save API costs! 💰
+""")
+
+if st.sidebar.button("🗑️ Clear All Cache"):
+    st.session_state.ship_static_cache = {}
+    st.session_state.risk_data_cache = {}
+    save_cache({}, {})
+    st.sidebar.success("Cache cleared!")
+    st.rerun()
+
 # Risk filter
 st.sidebar.header("🚨 Risk Filters")
 show_high_risk = st.sidebar.checkbox("High risk only (≥50)", value=False)
 show_sanctioned = st.sidebar.checkbox("Sanctioned vessels only", value=False)
+show_static_only = st.sidebar.checkbox("Ships with static data only", value=False)
 
 # Main content
 status_placeholder = st.empty()
@@ -290,7 +391,7 @@ stats_placeholder = st.empty()
 table_placeholder = st.empty()
 
 def update_map():
-    # Initialize API
+    # Initialize API only if credentials provided
     sp_api = None
     if enable_risk_check and sp_username and sp_password:
         sp_api = SPMaritimeAPI(sp_username, sp_password)
@@ -298,22 +399,8 @@ def update_map():
     with status_placeholder:
         with st.spinner(f'🔄 Collecting AIS data for {duration} seconds...'):
             tracker = AISTracker()
-            asyncio.run(tracker.collect_data(duration))
-            
-            if sp_api:
-                df = tracker.get_dataframe_with_risk(sp_api)
-            else:
-                df = pd.DataFrame([{
-                    'mmsi': mmsi,
-                    'name': (ship_data.get('static_data', {}).get('name', 
-                            ship_data.get('latest_position', {}).get('ship_name', 'Unknown'))).strip(),
-                    'latitude': ship_data.get('latest_position', {}).get('latitude'),
-                    'longitude': ship_data.get('latest_position', {}).get('longitude'),
-                    'speed': ship_data.get('latest_position', {}).get('sog', 0),
-                    'color': tracker.get_ship_color(ship_data.get('static_data', {}).get('type')),
-                    'risk_score': 0
-                } for mmsi, ship_data in tracker.ships.items() 
-                  if ship_data.get('latest_position', {}).get('latitude')])
+            asyncio.run(tracker.collect_data(duration, ais_api_key))
+            df = tracker.get_dataframe_with_risk(sp_api)
     
     if df.empty:
         st.warning("⚠️ No ships detected. Try increasing collection time.")
@@ -326,27 +413,31 @@ def update_map():
     if show_sanctioned and 'un_sanction' in df.columns:
         df = df[(df['un_sanction'] == True) | (df['ofac_sanction'] == True)]
     
+    if show_static_only:
+        df = df[df['has_static'] == True]
+    
     if df.empty:
         st.info("ℹ️ No ships match the selected filters.")
         return
     
     # Display stats
     with stats_placeholder:
-        cols = st.columns(5)
+        cols = st.columns(6)
         cols[0].metric("🚢 Total Ships", len(df))
         cols[1].metric("⚡ Moving", len(df[df['speed'] > 1]))
+        cols[2].metric("📡 Has Static", df['has_static'].sum())
         
         if 'risk_score' in df.columns:
             high_risk = len(df[df['risk_score'] >= 50])
-            cols[2].metric("🔴 High Risk", high_risk)
+            cols[3].metric("🔴 High Risk", high_risk)
             
             if 'un_sanction' in df.columns:
                 sanctioned = len(df[(df['un_sanction'] == True) | (df['ofac_sanction'] == True)])
-                cols[3].metric("🚨 Sanctioned", sanctioned)
+                cols[4].metric("🚨 Sanctioned", sanctioned)
             
-            cols[4].metric("📊 Avg Risk", f"{df['risk_score'].mean():.0f}")
+            cols[5].metric("📊 Avg Risk", f"{df['risk_score'].mean():.0f}")
         else:
-            cols[2].metric("📊 Avg Speed", f"{df['speed'].mean():.1f} kts")
+            cols[3].metric("📊 Avg Speed", f"{df['speed'].mean():.1f} kts")
     
     # Create map
     with map_placeholder:
@@ -388,13 +479,14 @@ def update_map():
     with table_placeholder:
         st.subheader("📋 Vessel Details")
         
-        display_cols = ['name', 'imo', 'speed', 'destination']
+        display_cols = ['name', 'imo', 'speed', 'destination', 'has_static']
         
         if 'risk_score' in df.columns:
             display_cols.extend(['risk_score', 'flag_disputed', 'un_sanction', 'ofac_sanction', 'dark_activity'])
             
             # Format risk indicators
             df_display = df[display_cols].copy()
+            df_display['has_static'] = df_display['has_static'].map({True: '✅', False: '❌'})
             df_display['flag_disputed'] = df_display['flag_disputed'].map({True: '⚠️', False: '✅', None: '-'})
             df_display['un_sanction'] = df_display['un_sanction'].map({True: '🚨', False: '✅', None: '-'})
             df_display['ofac_sanction'] = df_display['ofac_sanction'].map({True: '🚨', False: '✅', None: '-'})
@@ -414,8 +506,13 @@ def update_map():
             styled_df = df_display.style.applymap(highlight_risk, subset=['risk_score'])
             st.dataframe(styled_df, use_container_width=True, hide_index=True)
         else:
-            st.dataframe(df[display_cols].sort_values('speed', ascending=False), 
+            df_display = df[display_cols].copy()
+            df_display['has_static'] = df_display['has_static'].map({True: '✅', False: '❌'})
+            st.dataframe(df_display.sort_values('speed', ascending=False), 
                         use_container_width=True, hide_index=True)
+    
+    # Save cache after update
+    save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
     
     st.success(f"✅ Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
@@ -450,6 +547,7 @@ st.sidebar.markdown("""
 - 🚨 UN/OFAC sanctions
 - 🌑 Dark activity detected
 - ✅ No issues
+- ❌ No static data yet
 """)
 
 st.sidebar.markdown("---")
