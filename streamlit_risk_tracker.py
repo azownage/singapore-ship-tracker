@@ -45,6 +45,7 @@ def load_maritime_zones():
                 break
         
         if zones_file is None:
+            # File not found - return None silently
             return None, None, None
         
         # Read all three sheets
@@ -54,7 +55,7 @@ def load_maritime_zones():
         
         return anchorages_df, channels_df, fairways_df
     except Exception as e:
-        st.error(f"Could not load maritime zones: {e}")
+        # Return None on any error - zones are optional
         return None, None, None
 
 # Load zones
@@ -698,9 +699,10 @@ def collect_new_data():
 
 def display_data(df):
     """Display data with current filter settings"""
-    if df.empty:
-        st.warning("⚠️ No ships detected. Try increasing collection time.")
-        return
+    try:
+        if df.empty:
+            st.warning("⚠️ No ships detected. Try increasing collection time.")
+            return
     
     # Apply filters to dataframe
     df_filtered = df.copy()
@@ -807,87 +809,96 @@ def display_data(df):
         
         layers = []
         
-        # Add maritime zone layers if enabled
-        if show_anchorages and anchorages_df is not None:
-            # Group coordinates by anchorage name to create polygons
-            anchorage_polygons = []
-            for name in anchorages_df['Anchorage Name'].unique():
-                coords = anchorages_df[anchorages_df['Anchorage Name'] == name][
-                    ['Decimal Longitude', 'Decimal Latitude']
-                ].values.tolist()
-                if len(coords) >= 3:  # Need at least 3 points for polygon
-                    anchorage_polygons.append({
-                        'name': name,
-                        'polygon': coords,
-                        'color': [0, 255, 255, 80]  # Cyan with transparency
-                    })
-            
-            if anchorage_polygons:
-                anchorage_layer = pdk.Layer(
-                    'PolygonLayer',
-                    data=anchorage_polygons,
-                    get_polygon='polygon',
-                    get_fill_color='color',
-                    get_line_color=[0, 255, 255, 200],
-                    line_width_min_pixels=2,
-                    pickable=True,
-                    auto_highlight=True,
-                )
-                layers.append(anchorage_layer)
+        # Add maritime zone layers if enabled (wrapped in try-except)
+        try:
+            if show_anchorages and anchorages_df is not None and len(anchorages_df) > 0:
+                # Group coordinates by anchorage name to create polygons
+                anchorage_polygons = []
+                for name in anchorages_df['Anchorage Name'].unique():
+                    coords = anchorages_df[anchorages_df['Anchorage Name'] == name][
+                        ['Decimal Longitude', 'Decimal Latitude']
+                    ].values.tolist()
+                    if len(coords) >= 3:  # Need at least 3 points for polygon
+                        anchorage_polygons.append({
+                            'name': name,
+                            'polygon': coords,
+                            'color': [0, 255, 255, 80]  # Cyan with transparency
+                        })
+                
+                if anchorage_polygons:
+                    anchorage_layer = pdk.Layer(
+                        'PolygonLayer',
+                        data=anchorage_polygons,
+                        get_polygon='polygon',
+                        get_fill_color='color',
+                        get_line_color=[0, 255, 255, 200],
+                        line_width_min_pixels=2,
+                        pickable=True,
+                        auto_highlight=True,
+                    )
+                    layers.append(anchorage_layer)
+        except Exception as e:
+            st.warning(f"Could not display anchorages: {e}")
         
-        if show_channels and channels_df is not None:
-            # Group coordinates by channel name
-            channel_polygons = []
-            for name in channels_df['Channel Name'].unique():
-                coords = channels_df[channels_df['Channel Name'] == name][
-                    ['Decimal Longitude', 'Decimal Latitude']
-                ].values.tolist()
-                if len(coords) >= 3:
-                    channel_polygons.append({
-                        'name': name,
-                        'polygon': coords,
-                        'color': [255, 255, 0, 80]  # Yellow with transparency
-                    })
-            
-            if channel_polygons:
-                channel_layer = pdk.Layer(
-                    'PolygonLayer',
-                    data=channel_polygons,
-                    get_polygon='polygon',
-                    get_fill_color='color',
-                    get_line_color=[255, 255, 0, 200],
-                    line_width_min_pixels=2,
-                    pickable=True,
-                    auto_highlight=True,
-                )
-                layers.append(channel_layer)
+        try:
+            if show_channels and channels_df is not None and len(channels_df) > 0:
+                # Group coordinates by channel name
+                channel_polygons = []
+                for name in channels_df['Channel Name'].unique():
+                    coords = channels_df[channels_df['Channel Name'] == name][
+                        ['Decimal Longitude', 'Decimal Latitude']
+                    ].values.tolist()
+                    if len(coords) >= 3:
+                        channel_polygons.append({
+                            'name': name,
+                            'polygon': coords,
+                            'color': [255, 255, 0, 80]  # Yellow with transparency
+                        })
+                
+                if channel_polygons:
+                    channel_layer = pdk.Layer(
+                        'PolygonLayer',
+                        data=channel_polygons,
+                        get_polygon='polygon',
+                        get_fill_color='color',
+                        get_line_color=[255, 255, 0, 200],
+                        line_width_min_pixels=2,
+                        pickable=True,
+                        auto_highlight=True,
+                    )
+                    layers.append(channel_layer)
+        except Exception as e:
+            st.warning(f"Could not display channels: {e}")
         
-        if show_fairways and fairways_df is not None:
-            # Group coordinates by fairway name
-            fairway_polygons = []
-            for name in fairways_df['Fairway Name'].unique():
-                coords = fairways_df[fairways_df['Fairway Name'] == name][
-                    ['Decimal Longitude', 'Decimal Latitude']
-                ].values.tolist()
-                if len(coords) >= 3:
-                    fairway_polygons.append({
-                        'name': name,
-                        'polygon': coords,
-                        'color': [255, 165, 0, 80]  # Orange with transparency
-                    })
-            
-            if fairway_polygons:
-                fairway_layer = pdk.Layer(
-                    'PolygonLayer',
-                    data=fairway_polygons,
-                    get_polygon='polygon',
-                    get_fill_color='color',
-                    get_line_color=[255, 165, 0, 200],
-                    line_width_min_pixels=2,
-                    pickable=True,
-                    auto_highlight=True,
-                )
-                layers.append(fairway_layer)
+        try:
+            if show_fairways and fairways_df is not None and len(fairways_df) > 0:
+                # Group coordinates by fairway name
+                fairway_polygons = []
+                for name in fairways_df['Fairway Name'].unique():
+                    coords = fairways_df[fairways_df['Fairway Name'] == name][
+                        ['Decimal Longitude', 'Decimal Latitude']
+                    ].values.tolist()
+                    if len(coords) >= 3:
+                        fairway_polygons.append({
+                            'name': name,
+                            'polygon': coords,
+                            'color': [255, 165, 0, 80]  # Orange with transparency
+                        })
+                
+                if fairway_polygons:
+                    fairway_layer = pdk.Layer(
+                        'PolygonLayer',
+                        data=fairway_polygons,
+                        get_polygon='polygon',
+                        get_fill_color='color',
+                        get_line_color=[255, 165, 0, 200],
+                        line_width_min_pixels=2,
+                        pickable=True,
+                        auto_highlight=True,
+                    )
+                    layers.append(fairway_layer)
+        except Exception as e:
+            st.warning(f"Could not display fairways: {e}")
         
         # Single polygon layer for all vessels - no borders
         if len(df_filtered) > 0:
@@ -994,10 +1005,15 @@ def display_data(df):
                         st.session_state.selected_vessel = None
                         st.rerun()
     
-    save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
+        save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
+        
+        if st.session_state.last_collection:
+            st.success(f"✅ Last updated: {datetime.fromtimestamp(st.session_state.last_collection).strftime('%Y-%m-%d %H:%M:%S')}")
     
-    if st.session_state.last_collection:
-        st.success(f"✅ Last updated: {datetime.fromtimestamp(st.session_state.last_collection).strftime('%Y-%m-%d %H:%M:%S')}")
+    except Exception as e:
+        st.error(f"❌ Error displaying data: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
 
 # Main execution
 # Check if we need to collect new data or just refilter existing
