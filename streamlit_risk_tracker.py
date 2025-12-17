@@ -691,27 +691,23 @@ def display_data(df):
             pitch=0,
         )
         
-        # ALL ships shown as polygons now (with real or estimated dimensions)
-        # Add outline color to distinguish real vs estimated
+        # Add estimated flag for tooltip only (no visual difference now)
         df_filtered['is_estimated'] = (df_filtered['dimension_a'] == 0) & (df_filtered['dimension_b'] == 0)
         df_filtered['is_estimated'] = df_filtered['is_estimated'].apply(
             lambda x: '⚠️ Estimated size' if x else 'Real dimensions'
         )
-        df_filtered['line_color'] = df_filtered['is_estimated'].apply(
-            lambda x: [255, 255, 0, 200] if '⚠️' in x else [255, 255, 255, 150]  # Yellow = estimated, White = real
-        )
         
         layers = []
         
-        # Single polygon layer for all vessels
+        # Single polygon layer - no borders, shapes scale with zoom naturally
         if len(df_filtered) > 0:
             polygon_layer = pdk.Layer(
                 'PolygonLayer',
                 data=df_filtered,
                 get_polygon='vessel_polygon',
                 get_fill_color='color',
-                get_line_color='line_color',
-                line_width_min_pixels=2,
+                get_line_color=[0, 0, 0, 0],  # Transparent border (no border)
+                line_width_min_pixels=0,
                 pickable=True,
                 auto_highlight=True,
                 filled=True,
@@ -728,9 +724,6 @@ def display_data(df):
                 'style': {'backgroundColor': 'steelblue', 'color': 'white'}
             }
         )
-        
-        # Add note about estimated sizes
-        st.caption("⚠️ Ships with **yellow outline** have estimated dimensions (60m × 16m default). White outline = real AIS dimensions.")
         
         st.pydeck_chart(deck)
     
@@ -798,7 +791,7 @@ st.sidebar.markdown("### 🎨 S&P Compliance Legend")
 st.sidebar.markdown("""
 **Ship Colors (Legal Overall):**
 - 🔴 **Red**: Severe (2)
-- 🟠 **Orange**: Warning (1)
+- 🟠 **Orange**: Warning (1)  
 - 🟢 **Green**: Clear (0)
 
 **Indicators:**
@@ -809,11 +802,15 @@ st.sidebar.markdown("""
 
 st.sidebar.markdown("### 📐 Vessel Dimensions")
 st.sidebar.markdown("""
-**Outline Colors:**
-- ⬜ **White outline** = Real AIS dimensions
-- 🟨 **Yellow outline** = Estimated size (60m × 16m)
+**Zoom Behavior:**
+- Zoom OUT → Vessels appear larger
+- Zoom IN → Vessels appear smaller
+- Vessels show actual geographic size
 
-Ships show estimated size until they broadcast static data with dimensions A, B, C, D.
+**Size Info:**
+- Real dimensions from AIS (when available)
+- Estimated 60m × 16m (when no AIS data)
+- Check tooltip for size details
 """)
 
 st.sidebar.markdown("### 📊 S&P Screening v3.71")
