@@ -798,79 +798,60 @@ def display_data(df):
     with table_placeholder:
         st.subheader("📋 S&P Compliance Screening Results")
         
-        available_cols = list(df_filtered.columns)
-        display_cols = []
+        # Create columns for table with buttons
+        cols_for_table = st.columns([6, 1])  # Table takes 6/7, buttons take 1/7
         
-        for col in ['name', 'type_name', 'nav_status_name', 'length', 'width', 'imo', 'speed', 'destination', 'legal_overall',
-                    'ship_un_sanction', 'ship_ofac_sanction', 'dark_activity', 'flag_disputed',
-                    'port_call_3m', 'owner_un', 'owner_ofac']:
-            if col in available_cols:
-                display_cols.append(col)
-        
-        df_display = df_filtered[display_cols].copy()
-        
-        # Format S&P values (2 = Severe, 1 = Warning, 0 = OK)
-        def format_sp_value(val):
-            if pd.isna(val):
-                return '-'
-            elif val == 2:
-                return '🔴'  # Severe
-            elif val == 1:
-                return '🟡'  # Warning
-            else:
-                return '✅'  # OK
-        
-        for col in ['legal_overall', 'ship_un_sanction', 'ship_ofac_sanction', 'dark_activity',
-                    'flag_disputed', 'port_call_3m', 'owner_un', 'owner_ofac']:
-            if col in df_display.columns:
-                df_display[col] = df_display[col].apply(format_sp_value)
-        
-        st.dataframe(df_display, use_container_width=True, hide_index=True)
-        
-        # Add "View on Map" section below table
-        st.markdown("---")
-        st.markdown("### 🗺️ View Vessel on Map")
-        
-        # Create columns for better layout
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            # Dropdown to select vessel
-            vessel_options = ['Select a vessel...'] + [
-                f"{row['name']} ({row['type_name']}) - Speed: {row['speed']} kts" 
-                for _, row in df_filtered.iterrows()
-            ]
+        with cols_for_table[0]:
+            available_cols = list(df_filtered.columns)
+            display_cols = []
             
-            selected_option = st.selectbox(
-                "Select vessel to view on map:",
-                options=vessel_options,
-                key='vessel_selector'
-            )
+            for col in ['name', 'type_name', 'nav_status_name', 'length', 'width', 'imo', 'speed', 'destination', 'legal_overall',
+                        'ship_un_sanction', 'ship_ofac_sanction', 'dark_activity', 'flag_disputed',
+                        'port_call_3m', 'owner_un', 'owner_ofac']:
+                if col in available_cols:
+                    display_cols.append(col)
+            
+            df_display = df_filtered[display_cols].copy()
+            
+            # Format S&P values (2 = Severe, 1 = Warning, 0 = OK)
+            def format_sp_value(val):
+                if pd.isna(val):
+                    return '-'
+                elif val == 2:
+                    return '🔴'  # Severe
+                elif val == 1:
+                    return '🟡'  # Warning
+                else:
+                    return '✅'  # OK
+            
+            for col in ['legal_overall', 'ship_un_sanction', 'ship_ofac_sanction', 'dark_activity',
+                        'flag_disputed', 'port_call_3m', 'owner_un', 'owner_ofac']:
+                if col in df_display.columns:
+                    df_display[col] = df_display[col].apply(format_sp_value)
+            
+            st.dataframe(df_display, use_container_width=True, hide_index=True, height=600)
         
-        with col2:
-            st.write("")  # Spacing
-            st.write("")  # Spacing
-            if st.button("🎯 Center on Map", type="primary", disabled=(selected_option == 'Select a vessel...')):
-                if selected_option != 'Select a vessel...':
-                    # Extract vessel name from selection
-                    vessel_name = selected_option.split(' (')[0]
-                    # Find vessel in dataframe
-                    vessel = df_filtered[df_filtered['name'] == vessel_name]
-                    if not vessel.empty:
-                        st.session_state.selected_vessel = vessel.iloc[0]['mmsi']
-                        st.rerun()
+        with cols_for_table[1]:
+            st.write("**View**")
+            st.write("") # Spacing for alignment
+            
+            # Add a button for each row
+            for idx, row in df_filtered.iterrows():
+                if st.button("🗺️", key=f"view_{row['mmsi']}", help=f"View {row['name']} on map"):
+                    st.session_state.selected_vessel = row['mmsi']
+                    st.rerun()
         
-        # Show currently selected vessel
+        # Show currently centered vessel info
         if st.session_state.selected_vessel is not None:
             selected = df_filtered[df_filtered['mmsi'] == st.session_state.selected_vessel]
             if not selected.empty:
-                st.success(f"🎯 Map centered on: **{selected.iloc[0]['name']}** (Zoom level: 15)")
-                if st.button("↩️ Reset to Full View"):
+                st.success(f"🎯 Map centered on: **{selected.iloc[0]['name']}** (Zoom: 15)")
+                if st.button("↩️ Reset to Full View", type="secondary"):
                     st.session_state.selected_vessel = None
                     st.rerun()
             else:
-                st.warning("⚠️ Selected vessel not in current filter. Showing full view.")
-                if st.button("↩️ Reset to Full View"):
+                st.warning("⚠️ Selected vessel not visible with current filters.")
+                if st.button("↩️ Reset to Full View", type="secondary"):
                     st.session_state.selected_vessel = None
                     st.rerun()
     
