@@ -270,8 +270,8 @@ st.sidebar.header("⚙️ Configuration")
 
 # API Configuration
 with st.sidebar.expander("🔐 S&P Maritime API", expanded=False):
-    sp_username = st.text_input("Username", value="1a1ac0b5-ae9f-4bd4-892e-38006e81f61e", type="default")
-    sp_password = st.text_input("Password", value="65pqTv78zX3ZwVLZ", type="password")
+    sp_username = st.text_input("Username", value="//1a1ac0b5-ae9f-4bd4-892e-38006e81f61e", type="default")
+    sp_password = st.text_input("Password", value="//65pqTv78zX3ZwVLZ", type="password")
 
 # Tracking settings
 duration = st.sidebar.slider("AIS collection time (seconds)", 10, 60, 30)
