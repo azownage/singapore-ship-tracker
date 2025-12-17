@@ -1,7 +1,7 @@
 """
 Singapore AIS Tracker with S&P Maritime Risk Intelligence
 Real-time vessel tracking with compliance and risk indicators
-Enhanced with persistent storage and caching
+Enhanced with persistent storage and caching - BULLETPROOF VERSION
 """
 
 import streamlit as st
@@ -413,7 +413,7 @@ def update_map():
     if show_sanctioned and 'un_sanction' in df.columns:
         df = df[(df['un_sanction'] == True) | (df['ofac_sanction'] == True)]
     
-    if show_static_only:
+    if show_static_only and 'has_static' in df.columns:
         df = df[df['has_static'] == True]
     
     if df.empty:
@@ -425,13 +425,15 @@ def update_map():
         cols = st.columns(6)
         cols[0].metric("🚢 Total Ships", len(df))
         cols[1].metric("⚡ Moving", len(df[df['speed'] > 1]))
-        cols[2].metric("📡 Has Static", df['has_static'].sum())
+        
+        if 'has_static' in df.columns:
+            cols[2].metric("📡 Has Static", int(df['has_static'].sum()))
         
         if 'risk_score' in df.columns:
             high_risk = len(df[df['risk_score'] >= 50])
             cols[3].metric("🔴 High Risk", high_risk)
             
-            if 'un_sanction' in df.columns:
+            if 'un_sanction' in df.columns and 'ofac_sanction' in df.columns:
                 sanctioned = len(df[(df['un_sanction'] == True) | (df['ofac_sanction'] == True)])
                 cols[4].metric("🚨 Sanctioned", sanctioned)
             
@@ -475,42 +477,41 @@ def update_map():
             }
         ))
     
-    # Show detailed table
+    # Show detailed table - BULLETPROOF VERSION
     with table_placeholder:
         st.subheader("📋 Vessel Details")
         
-        # Start with base columns that always exist
-        display_cols = ['name', 'imo', 'speed', 'destination', 'has_static']
+        # Get list of columns that actually exist in the dataframe
+        available_cols = list(df.columns)
         
-        # Only add risk columns if they exist in the dataframe
-        if 'risk_score' in df.columns:
-            risk_cols = ['risk_score']
-            if 'flag_disputed' in df.columns:
-                risk_cols.append('flag_disputed')
-            if 'un_sanction' in df.columns:
-                risk_cols.append('un_sanction')
-            if 'ofac_sanction' in df.columns:
-                risk_cols.append('ofac_sanction')
-            if 'dark_activity' in df.columns:
-                risk_cols.append('dark_activity')
-            
-            display_cols.extend(risk_cols)
-            
-            # Format risk indicators
-            df_display = df[display_cols].copy()
+        # Build display columns list by checking each one
+        display_cols = []
+        for col in ['name', 'imo', 'speed', 'destination', 'has_static', 'risk_score', 
+                    'flag_disputed', 'un_sanction', 'ofac_sanction', 'dark_activity']:
+            if col in available_cols:
+                display_cols.append(col)
+        
+        # Create display dataframe with only available columns
+        df_display = df[display_cols].copy()
+        
+        # Format columns only if they exist
+        if 'has_static' in df_display.columns:
             df_display['has_static'] = df_display['has_static'].map({True: '✅', False: '❌'})
-            
-            # Only format columns that exist
-            if 'flag_disputed' in df_display.columns:
-                df_display['flag_disputed'] = df_display['flag_disputed'].map({True: '⚠️', False: '✅', None: '-'})
-            if 'un_sanction' in df_display.columns:
-                df_display['un_sanction'] = df_display['un_sanction'].map({True: '🚨', False: '✅', None: '-'})
-            if 'ofac_sanction' in df_display.columns:
-                df_display['ofac_sanction'] = df_display['ofac_sanction'].map({True: '🚨', False: '✅', None: '-'})
-            if 'dark_activity' in df_display.columns:
-                df_display['dark_activity'] = df_display['dark_activity'].map({True: '🌑', False: '✅', None: '-'})
-            
-            # Color code risk scores
+        
+        if 'flag_disputed' in df_display.columns:
+            df_display['flag_disputed'] = df_display['flag_disputed'].map({True: '⚠️', False: '✅', None: '-'})
+        
+        if 'un_sanction' in df_display.columns:
+            df_display['un_sanction'] = df_display['un_sanction'].map({True: '🚨', False: '✅', None: '-'})
+        
+        if 'ofac_sanction' in df_display.columns:
+            df_display['ofac_sanction'] = df_display['ofac_sanction'].map({True: '🚨', False: '✅', None: '-'})
+        
+        if 'dark_activity' in df_display.columns:
+            df_display['dark_activity'] = df_display['dark_activity'].map({True: '🌑', False: '✅', None: '-'})
+        
+        # Apply styling only if risk_score column exists
+        if 'risk_score' in df_display.columns:
             def highlight_risk(val):
                 if pd.isna(val) or val == 0:
                     return ''
@@ -524,8 +525,6 @@ def update_map():
             styled_df = df_display.style.applymap(highlight_risk, subset=['risk_score'])
             st.dataframe(styled_df, use_container_width=True, hide_index=True)
         else:
-            df_display = df[display_cols].copy()
-            df_display['has_static'] = df_display['has_static'].map({True: '✅', False: '❌'})
             st.dataframe(df_display.sort_values('speed', ascending=False), 
                         use_container_width=True, hide_index=True)
     
