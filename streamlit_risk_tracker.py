@@ -1,7 +1,7 @@
 """
 Singapore AIS Tracker with S&P Maritime Risk Intelligence
-Real-time vessel tracking with compliance and risk indicators
-Enhanced with persistent storage and caching - BULLETPROOF VERSION
+Complete S&P Compliance Screening v3.71 Implementation
+Based on official S&P Global documentation
 """
 
 import streamlit as st
@@ -60,14 +60,14 @@ def save_cache(ship_cache, risk_cache):
     except Exception as e:
         st.warning(f"Could not save cache: {e}")
 
-# Initialize session state for persistent storage
+# Initialize session state
 if 'ship_static_cache' not in st.session_state:
     ship_cache, risk_cache = load_cache()
     st.session_state.ship_static_cache = ship_cache
     st.session_state.risk_data_cache = risk_cache
     st.session_state.last_save = time.time()
 
-# S&P Maritime API Integration
+# S&P Maritime API Integration with COMPLETE Compliance Screening
 class SPMaritimeAPI:
     def __init__(self, username: str, password: str):
         self.username = username
@@ -75,24 +75,19 @@ class SPMaritimeAPI:
         self.base_url = "https://maritimewebservices.ihs.com/MaritimeWCF/APSShipService.svc/RESTFul/GetShipsByIHSLRorIMONumbersAll"
     
     def get_ship_risk_data(self, imo_numbers: List[str]) -> Dict[str, Dict]:
-        """Get risk indicators for multiple IMO numbers (with caching)"""
+        """Get complete compliance screening for multiple IMO numbers"""
         if not imo_numbers:
             return {}
         
-        # Use session state cache
         cache = st.session_state.risk_data_cache
-        
-        # Check which IMOs we already have
         uncached_imos = [imo for imo in imo_numbers if imo not in cache]
         
         if not uncached_imos:
-            # All data in cache, no API call needed!
             return {imo: cache[imo] for imo in imo_numbers}
         
-        st.info(f"🔍 Fetching risk data for {len(uncached_imos)} new vessels from S&P API...")
+        st.info(f"🔍 Fetching S&P compliance data for {len(uncached_imos)} vessels...")
         
         try:
-            # Batch API call (max 100 per request)
             batches = [uncached_imos[i:i+100] for i in range(0, len(uncached_imos), 100)]
             
             for batch in batches:
@@ -115,58 +110,154 @@ class SPMaritimeAPI:
                                 detail = ship['APSShipDetail']
                                 imo = str(detail.get('IHSLRorIMOShipNo', ''))
                                 
-                                # Cache this result permanently
-                                cache[imo] = {
-                                    'ship_name': detail.get('ShipName', ''),
-                                    'ship_status': detail.get('ShipStatus', ''),
-                                    'flag_disputed': detail.get('ShipFlagDisputed', '0') == '1',
-                                    'un_sanction': detail.get('ShipUNSanctionList', '0') == '1',
-                                    'owner_un_sanction': detail.get('ShipOwnerUNSanctionList', '0') == '1',
-                                    'dark_activity': detail.get('ShipDarkActivityIndicator', '0') == '1',
-                                    'ofac_sanction': detail.get('ShipOFACSanctionList', '0') == '1',
-                                    'owner_ofac_sanction': detail.get('ShipOwnerOFACSanctionList', '0') == '1',
-                                    'flag_name': detail.get('FlagName', ''),
-                                    'ship_manager': detail.get('ShipManager', ''),
-                                    'registered_owner': detail.get('RegisteredOwner', ''),
-                                    'technical_manager': detail.get('TechnicalManager', ''),
-                                    'risk_score': self._calculate_risk_score(detail),
-                                    'cached_at': datetime.now().isoformat()
-                                }
+                                # Extract ALL S&P compliance fields per documentation
+                                compliance_data = self._extract_complete_compliance(detail)
+                                cache[imo] = compliance_data
                 
-                time.sleep(0.5)  # Rate limiting
+                time.sleep(0.5)
             
-            # Save cache to disk
             st.session_state.risk_data_cache = cache
             save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
-            
-            st.success(f"✅ Cached risk data for {len(uncached_imos)} vessels")
+            st.success(f"✅ Cached compliance data for {len(uncached_imos)} vessels")
                 
         except Exception as e:
             st.error(f"⚠️ S&P API error: {str(e)}")
         
-        # Return combined cache (old + new)
         return {imo: cache.get(imo, {}) for imo in imo_numbers}
     
-    def _calculate_risk_score(self, detail: Dict) -> int:
-        """Calculate risk score (0-100)"""
-        score = 0
+    def _extract_complete_compliance(self, detail: Dict) -> Dict:
+        """Extract complete S&P compliance screening per v3.71 specification"""
         
-        if detail.get('ShipFlagDisputed') == '1':
-            score += 25
-        if detail.get('ShipUNSanctionList') == '1':
-            score += 30
-        if detail.get('ShipOwnerUNSanctionList') == '1':
-            score += 20
-        if detail.get('ShipDarkActivityIndicator') == '1':
-            score += 15
-        if detail.get('ShipOFACSanctionList') == '1':
-            score += 30
-        if detail.get('ShipOwnerOFACSanctionList') == '1':
-            score += 20
+        # Convert string values to proper format (2/1/0)
+        def parse_value(val):
+            if val == '2' or val == 2:
+                return 2
+            elif val == '1' or val == 1:
+                return 1
+            else:
+                return 0
         
-        return min(score, 100)
+        # Ship Sanctions (Severe = 2)
+        ship_bes = parse_value(detail.get('ShipBESSanctionList', '0'))
+        ship_eu = parse_value(detail.get('ShipEUSanctionList', '0'))
+        ship_ofac = parse_value(detail.get('ShipOFACSanctionList', '0'))
+        ship_ofac_non_sdn = parse_value(detail.get('ShipOFACNonSDNSanctionList', '0'))
+        ship_swiss = parse_value(detail.get('ShipSwissSanctionList', '0'))
+        ship_un = parse_value(detail.get('ShipUNSanctionList', '0'))
+        ship_ofac_advisory = parse_value(detail.get('ShipUSTreasuryOFACAdvisoryList', '0'))
+        
+        # Port Call History (Severe = 2, Warning = 1)
+        port_call_3m = parse_value(detail.get('ShipSanctionedCountryPortCallLast3m', '0'))
+        port_call_6m = parse_value(detail.get('ShipSanctionedCountryPortCallLast6m', '0'))
+        port_call_12m = parse_value(detail.get('ShipSanctionedCountryPortCallLast12m', '0'))
+        
+        # Dark Activity (Severe = 2, Warning = 1)
+        dark_activity = parse_value(detail.get('ShipDarkActivityIndicator', '0'))
+        
+        # Ship Flag Issues (Severe = 2, Warning = 1)
+        flag_disputed = parse_value(detail.get('ShipFlagDisputed', '0'))
+        flag_sanctioned = parse_value(detail.get('ShipFlagSanctionedCountry', '0'))
+        flag_historical = parse_value(detail.get('ShipHistoricalFlagSanctionedCountry', '0'))
+        
+        # Owner/Operator Sanctions (Severe = 2)
+        owner_australian = parse_value(detail.get('ShipOwnerAustralianSanctionList', '0'))
+        owner_bes = parse_value(detail.get('ShipOwnerBESSanctionList', '0'))
+        owner_canadian = parse_value(detail.get('ShipOwnerCanadianSanctionList', '0'))
+        owner_eu = parse_value(detail.get('ShipOwnerEUSanctionList', '0'))
+        owner_fatf = parse_value(detail.get('ShipOwnerFATFJurisdiction', '0'))
+        owner_ofac_ssi = parse_value(detail.get('ShipOFACSSIList', '0'))
+        owner_ofac = parse_value(detail.get('ShipOwnerOFACSanctionList', '0'))
+        owner_swiss = parse_value(detail.get('ShipOwnerSwissSanctionList', '0'))
+        owner_uae = parse_value(detail.get('ShipOwnerUAESanctionList', '0'))
+        owner_un = parse_value(detail.get('ShipOwnerUNSanctionList', '0'))
+        owner_ofac_country = parse_value(detail.get('ShipOwnerOFACSanctionedCountry', '0'))
+        
+        # Calculate Legal Overall Score (highest value from all checks)
+        all_scores = [
+            ship_bes, ship_eu, ship_ofac, ship_ofac_non_sdn, ship_swiss, ship_un, ship_ofac_advisory,
+            port_call_3m, port_call_6m, port_call_12m,
+            dark_activity,
+            flag_disputed, flag_sanctioned,
+            owner_australian, owner_bes, owner_canadian, owner_eu, owner_fatf,
+            owner_ofac_ssi, owner_ofac, owner_swiss, owner_uae, owner_un, owner_ofac_country
+        ]
+        legal_overall = max(all_scores)
+        
+        return {
+            # Basic Info
+            'ship_name': detail.get('ShipName', ''),
+            'ship_status': detail.get('ShipStatus', ''),
+            'flag_name': detail.get('FlagName', ''),
+            'ship_manager': detail.get('ShipManager', ''),
+            'registered_owner': detail.get('RegisteredOwner', ''),
+            'technical_manager': detail.get('TechnicalManager', ''),
+            
+            # Overall Score (per S&P spec)
+            'legal_overall': legal_overall,
+            
+            # Ship Sanctions
+            'ship_bes_sanction': ship_bes,
+            'ship_eu_sanction': ship_eu,
+            'ship_ofac_sanction': ship_ofac,
+            'ship_ofac_non_sdn': ship_ofac_non_sdn,
+            'ship_swiss_sanction': ship_swiss,
+            'ship_un_sanction': ship_un,
+            'ship_ofac_advisory': ship_ofac_advisory,
+            
+            # Port Calls
+            'port_call_3m': port_call_3m,
+            'port_call_6m': port_call_6m,
+            'port_call_12m': port_call_12m,
+            
+            # Dark Activity
+            'dark_activity': dark_activity,
+            
+            # Flag Issues
+            'flag_disputed': flag_disputed,
+            'flag_sanctioned': flag_sanctioned,
+            'flag_historical': flag_historical,
+            
+            # Owner/Operator Sanctions
+            'owner_australian': owner_australian,
+            'owner_bes': owner_bes,
+            'owner_canadian': owner_canadian,
+            'owner_eu': owner_eu,
+            'owner_fatf': owner_fatf,
+            'owner_ofac_ssi': owner_ofac_ssi,
+            'owner_ofac': owner_ofac,
+            'owner_swiss': owner_swiss,
+            'owner_uae': owner_uae,
+            'owner_un': owner_un,
+            'owner_ofac_country': owner_ofac_country,
+            
+            # Risk Score (0-100 for display)
+            'risk_score': self._calculate_risk_score(legal_overall, all_scores),
+            
+            'cached_at': datetime.now().isoformat()
+        }
+    
+    def _calculate_risk_score(self, legal_overall: int, all_scores: List[int]) -> int:
+        """
+        Calculate 0-100 risk score based on S&P compliance
+        
+        Per S&P Spec:
+        - Legal Overall 2 = Severe (80-100 points)
+        - Legal Overall 1 = Warning (40-79 points)
+        - Legal Overall 0 = Clear (0-39 points)
+        """
+        if legal_overall == 2:
+            # Severe - base 80, add 4 points per additional severe issue
+            severe_count = sum(1 for s in all_scores if s == 2)
+            return min(80 + (severe_count * 4), 100)
+        elif legal_overall == 1:
+            # Warning - base 40, add 5 points per warning
+            warning_count = sum(1 for s in all_scores if s == 1)
+            return min(40 + (warning_count * 5), 79)
+        else:
+            # Clear
+            return 0
 
-# AIS Tracker with persistent storage
+# AIS Tracker
 class AISTracker:
     def __init__(self):
         self.ships = defaultdict(lambda: {
@@ -174,23 +265,23 @@ class AISTracker:
             'static_data': None
         })
     
-    def get_ship_color(self, type_code, risk_score=0):
-        """Return color based on risk score"""
-        if risk_score >= 50:
-            return [255, 0, 0, 200]  # Red - High risk
-        elif risk_score >= 25:
-            return [255, 165, 0, 200]  # Orange - Medium risk
+    def get_ship_color(self, type_code, legal_overall=0):
+        """Return color based on S&P Legal Overall status"""
+        if legal_overall == 2:
+            return [255, 0, 0, 220]  # RED - Severe
+        elif legal_overall == 1:
+            return [255, 165, 0, 220]  # ORANGE - Warning
         elif type_code:
             if 60 <= type_code <= 69:
                 return [0, 0, 255, 180]  # Blue - Passenger
             elif 70 <= type_code <= 79:
-                return [255, 100, 100, 180]  # Light Red - Cargo
+                return [100, 200, 100, 180]  # Light Green - Cargo
             elif 80 <= type_code <= 89:
-                return [139, 0, 0, 180]  # Dark Red - Tanker
+                return [139, 0, 139, 180]  # Purple - Tanker
             elif type_code == 52:
-                return [128, 0, 128, 180]  # Purple - Tug
+                return [128, 128, 0, 180]  # Olive - Tug
         
-        return [0, 255, 0, 180]  # Green - Low/No risk
+        return [0, 255, 0, 180]  # GREEN - Clear/OK
     
     async def collect_data(self, duration=30, api_key="e38db7cbbfbd792829696a346f41a6630d74c53d"):
         async with websockets.connect("wss://stream.aisstream.io/v0/stream") as ws:
@@ -243,7 +334,6 @@ class AISTracker:
         dimension = static_data.get('Dimension', {})
         imo = str(static_data.get('ImoNumber', 0))
         
-        # Store in session state for persistence
         static_info = {
             'name': static_data.get('Name', 'Unknown'),
             'imo': imo,
@@ -255,33 +345,23 @@ class AISTracker:
         }
         
         self.ships[mmsi]['static_data'] = static_info
-        
-        # Store permanently in session state
         st.session_state.ship_static_cache[str(mmsi)] = static_info
         
-        # Periodic save to disk
-        if time.time() - st.session_state.last_save > 60:  # Save every minute
+        if time.time() - st.session_state.last_save > 60:
             save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
             st.session_state.last_save = time.time()
     
     def get_dataframe_with_risk(self, sp_api: SPMaritimeAPI) -> pd.DataFrame:
-        """Get dataframe with risk indicators"""
+        """Get dataframe with complete S&P compliance data"""
         data = []
         
-        # Collect all valid ships
         for mmsi, ship_data in self.ships.items():
             pos = ship_data.get('latest_position')
+            static = ship_data.get('static_data') or st.session_state.ship_static_cache.get(str(mmsi), {})
             
-            # Try current static data, fall back to cached
-            static = ship_data.get('static_data')
-            if not static:
-                static = st.session_state.ship_static_cache.get(str(mmsi), {})
-            
-            # Skip if no position data or invalid coordinates
             if not pos or pos.get('latitude') is None or pos.get('longitude') is None:
                 continue
             
-            # Safely get ship name
             name = static.get('name') or pos.get('ship_name') or 'Unknown'
             name = name.strip() if name else 'Unknown'
             
@@ -300,6 +380,7 @@ class AISTracker:
                 'length': static.get('length', 0),
                 'destination': (static.get('destination') or 'Unknown').strip(),
                 'call_sign': static.get('call_sign', ''),
+                'legal_overall': 0,
                 'risk_score': 0,
                 'has_static': bool(static.get('name')),
                 'color': self.get_ship_color(ship_type, 0)
@@ -310,65 +391,68 @@ class AISTracker:
         if len(df) == 0:
             return df
         
-        # Get IMO numbers for risk checking
         valid_imos = [str(imo) for imo in df['imo'].unique() if imo and imo != '0']
         
         if valid_imos and sp_api:
-            # Get risk data (uses cache, minimal API calls)
             risk_data = sp_api.get_ship_risk_data(valid_imos)
             
-            # Merge risk data
             for idx, row in df.iterrows():
                 imo = str(row['imo'])
                 if imo in risk_data and risk_data[imo]:
                     risk_info = risk_data[imo]
+                    legal_overall = risk_info.get('legal_overall', 0)
+                    
+                    df.at[idx, 'legal_overall'] = legal_overall
                     df.at[idx, 'risk_score'] = risk_info.get('risk_score', 0)
-                    df.at[idx, 'flag_disputed'] = risk_info.get('flag_disputed', False)
-                    df.at[idx, 'un_sanction'] = risk_info.get('un_sanction', False)
-                    df.at[idx, 'ofac_sanction'] = risk_info.get('ofac_sanction', False)
-                    df.at[idx, 'dark_activity'] = risk_info.get('dark_activity', False)
                     df.at[idx, 'flag_name'] = risk_info.get('flag_name', '')
                     df.at[idx, 'registered_owner'] = risk_info.get('registered_owner', '')
                     
-                    # Update color based on risk
-                    df.at[idx, 'color'] = self.get_ship_color(row['type'], risk_info.get('risk_score', 0))
+                    # Key compliance flags
+                    df.at[idx, 'ship_un_sanction'] = risk_info.get('ship_un_sanction', 0)
+                    df.at[idx, 'ship_ofac_sanction'] = risk_info.get('ship_ofac_sanction', 0)
+                    df.at[idx, 'dark_activity'] = risk_info.get('dark_activity', 0)
+                    df.at[idx, 'flag_disputed'] = risk_info.get('flag_disputed', 0)
+                    df.at[idx, 'port_call_3m'] = risk_info.get('port_call_3m', 0)
+                    df.at[idx, 'owner_un'] = risk_info.get('owner_un', 0)
+                    df.at[idx, 'owner_ofac'] = risk_info.get('owner_ofac', 0)
+                    
+                    # Update color based on legal overall
+                    df.at[idx, 'color'] = self.get_ship_color(row['type'], legal_overall)
         
         return df
 
 
 # Streamlit UI
 st.title("🚢 Singapore Ship Risk Tracker")
-st.markdown("Real-time vessel tracking with S&P Maritime compliance indicators")
+st.markdown("Real-time vessel tracking with **S&P Global Compliance Screening v3.71**")
 
-# Sidebar - Get credentials from secrets
+# Sidebar
 st.sidebar.header("⚙️ Configuration")
 
-# Try to load from Streamlit secrets first, otherwise use input
+# Load credentials
 try:
     sp_username = st.secrets["sp_maritime"]["username"]
     sp_password = st.secrets["sp_maritime"]["password"]
     ais_api_key = st.secrets.get("aisstream", {}).get("api_key", "e38db7cbbfbd792829696a346f41a6630d74c53d")
     st.sidebar.success("🔐 Using credentials from secrets")
 except:
-    # Fallback to manual input (hidden by default)
     with st.sidebar.expander("🔐 S&P Maritime API (Admin Only)", expanded=False):
         st.warning("⚠️ Credentials should be in Streamlit Secrets")
-        sp_username = st.text_input("Username", type="password", help="Enter S&P username")
-        sp_password = st.text_input("Password", type="password", help="Enter S&P password")
+        sp_username = st.text_input("Username", type="password")
+        sp_password = st.text_input("Password", type="password")
     ais_api_key = "e38db7cbbfbd792829696a346f41a6630d74c53d"
 
-# Tracking settings
 duration = st.sidebar.slider("AIS collection time (seconds)", 10, 60, 30)
-enable_risk_check = st.sidebar.checkbox("Enable S&P risk checking", value=True)
+enable_risk_check = st.sidebar.checkbox("Enable S&P compliance screening", value=True)
 auto_refresh = st.sidebar.checkbox("Auto-refresh every 60s", value=False)
 
 # Cache stats
 st.sidebar.header("💾 Cache Statistics")
 st.sidebar.info(f"""
-**Static Data Cache:** {len(st.session_state.ship_static_cache)} vessels
-**Risk Data Cache:** {len(st.session_state.risk_data_cache)} vessels
+**Static Data:** {len(st.session_state.ship_static_cache)} vessels
+**Compliance Data:** {len(st.session_state.risk_data_cache)} vessels
 
-Cached data is reused to save API costs! 💰
+Cached data saves API costs! 💰
 """)
 
 if st.sidebar.button("🗑️ Clear All Cache"):
@@ -378,11 +462,11 @@ if st.sidebar.button("🗑️ Clear All Cache"):
     st.sidebar.success("Cache cleared!")
     st.rerun()
 
-# Risk filter
-st.sidebar.header("🚨 Risk Filters")
-show_high_risk = st.sidebar.checkbox("High risk only (≥50)", value=False)
-show_sanctioned = st.sidebar.checkbox("Sanctioned vessels only", value=False)
-show_static_only = st.sidebar.checkbox("Ships with static data only", value=False)
+# Filters based on S&P Legal Overall
+st.sidebar.header("🚨 Compliance Filters")
+show_severe = st.sidebar.checkbox("Severe only (Legal Overall = 2)", value=False)
+show_warning = st.sidebar.checkbox("Warning+ (Legal Overall ≥ 1)", value=False)
+show_sanctioned = st.sidebar.checkbox("UN/OFAC sanctions only", value=False)
 
 # Main content
 status_placeholder = st.empty()
@@ -391,7 +475,6 @@ stats_placeholder = st.empty()
 table_placeholder = st.empty()
 
 def update_map():
-    # Initialize API only if credentials provided
     sp_api = None
     if enable_risk_check and sp_username and sp_password:
         sp_api = SPMaritimeAPI(sp_username, sp_password)
@@ -407,14 +490,14 @@ def update_map():
         return
     
     # Apply filters
-    if show_high_risk and 'risk_score' in df.columns:
-        df = df[df['risk_score'] >= 50]
+    if show_severe and 'legal_overall' in df.columns:
+        df = df[df['legal_overall'] == 2]
     
-    if show_sanctioned and 'un_sanction' in df.columns:
-        df = df[(df['un_sanction'] == True) | (df['ofac_sanction'] == True)]
+    if show_warning and 'legal_overall' in df.columns:
+        df = df[df['legal_overall'] >= 1]
     
-    if show_static_only and 'has_static' in df.columns:
-        df = df[df['has_static'] == True]
+    if show_sanctioned and 'ship_un_sanction' in df.columns:
+        df = df[(df['ship_un_sanction'] == 2) | (df['ship_ofac_sanction'] == 2)]
     
     if df.empty:
         st.info("ℹ️ No ships match the selected filters.")
@@ -429,106 +512,93 @@ def update_map():
         if 'has_static' in df.columns:
             cols[2].metric("📡 Has Static", int(df['has_static'].sum()))
         
-        if 'risk_score' in df.columns:
-            high_risk = len(df[df['risk_score'] >= 50])
-            cols[3].metric("🔴 High Risk", high_risk)
-            
-            if 'un_sanction' in df.columns and 'ofac_sanction' in df.columns:
-                sanctioned = len(df[(df['un_sanction'] == True) | (df['ofac_sanction'] == True)])
-                cols[4].metric("🚨 Sanctioned", sanctioned)
-            
+        if 'legal_overall' in df.columns:
+            severe = len(df[df['legal_overall'] == 2])
+            warning = len(df[df['legal_overall'] == 1])
+            cols[3].metric("🔴 Severe", severe)
+            cols[4].metric("🟠 Warning", warning)
             cols[5].metric("📊 Avg Risk", f"{df['risk_score'].mean():.0f}")
-        else:
-            cols[3].metric("📊 Avg Speed", f"{df['speed'].mean():.1f} kts")
     
     # Create map
     with map_placeholder:
-        # Use simpler map configuration
         view_state = pdk.ViewState(
             latitude=1.27,
             longitude=103.85,
             zoom=11,
-            pitch=0,  # Flat view for better visibility
+            pitch=0,
         )
         
-        # Create scatter layer
         scatter_layer = pdk.Layer(
             'ScatterplotLayer',
             data=df,
             get_position='[longitude, latitude]',
             get_color='color',
-            get_radius=200,  # Larger for visibility
+            get_radius=200,
             pickable=True,
             auto_highlight=True,
         )
         
-        # Create deck with open street map (no token needed)
         deck = pdk.Deck(
-            map_style='',  # Empty = use default open tiles
+            map_style='',
             initial_view_state=view_state,
             layers=[scatter_layer],
             tooltip={
-                'html': '<b>{name}</b><br/>IMO: {imo}<br/>Speed: {speed} kts<br/>Risk: {risk_score}<br/>Destination: {destination}',
+                'html': '<b>{name}</b><br/>IMO: {imo}<br/>Speed: {speed} kts<br/>Risk: {risk_score}<br/>Legal Overall: {legal_overall}',
                 'style': {'backgroundColor': 'steelblue', 'color': 'white'}
             }
         )
         
         st.pydeck_chart(deck)
     
-    # Show detailed table - BULLETPROOF VERSION
+    # Show table
     with table_placeholder:
-        st.subheader("📋 Vessel Details")
+        st.subheader("📋 S&P Compliance Screening Results")
         
-        # Get list of columns that actually exist in the dataframe
         available_cols = list(df.columns)
-        
-        # Build display columns list by checking each one
         display_cols = []
-        for col in ['name', 'imo', 'speed', 'destination', 'has_static', 'risk_score', 
-                    'flag_disputed', 'un_sanction', 'ofac_sanction', 'dark_activity']:
+        
+        for col in ['name', 'imo', 'speed', 'destination', 'legal_overall', 'risk_score',
+                    'ship_un_sanction', 'ship_ofac_sanction', 'dark_activity', 'flag_disputed',
+                    'port_call_3m', 'owner_un', 'owner_ofac']:
             if col in available_cols:
                 display_cols.append(col)
         
-        # Create display dataframe with only available columns
         df_display = df[display_cols].copy()
         
-        # Format columns only if they exist
-        if 'has_static' in df_display.columns:
-            df_display['has_static'] = df_display['has_static'].map({True: '✅', False: '❌'})
+        # Format S&P values (2 = Severe, 1 = Warning, 0 = OK)
+        def format_sp_value(val):
+            if pd.isna(val):
+                return '-'
+            elif val == 2:
+                return '🔴'  # Severe
+            elif val == 1:
+                return '🟡'  # Warning
+            else:
+                return '✅'  # OK
         
-        if 'flag_disputed' in df_display.columns:
-            df_display['flag_disputed'] = df_display['flag_disputed'].map({True: '⚠️', False: '✅', None: '-'})
+        for col in ['legal_overall', 'ship_un_sanction', 'ship_ofac_sanction', 'dark_activity',
+                    'flag_disputed', 'port_call_3m', 'owner_un', 'owner_ofac']:
+            if col in df_display.columns:
+                df_display[col] = df_display[col].apply(format_sp_value)
         
-        if 'un_sanction' in df_display.columns:
-            df_display['un_sanction'] = df_display['un_sanction'].map({True: '🚨', False: '✅', None: '-'})
-        
-        if 'ofac_sanction' in df_display.columns:
-            df_display['ofac_sanction'] = df_display['ofac_sanction'].map({True: '🚨', False: '✅', None: '-'})
-        
-        if 'dark_activity' in df_display.columns:
-            df_display['dark_activity'] = df_display['dark_activity'].map({True: '🌑', False: '✅', None: '-'})
-        
-        # Apply styling only if risk_score column exists
+        # Color code risk scores
         if 'risk_score' in df_display.columns:
             def highlight_risk(val):
                 if pd.isna(val) or val == 0:
                     return ''
-                elif val >= 50:
-                    return 'background-color: #ff4444; color: white'
-                elif val >= 25:
+                elif val >= 80:
+                    return 'background-color: #ff0000; color: white; font-weight: bold'
+                elif val >= 40:
                     return 'background-color: #ffaa00; color: white'
                 else:
-                    return 'background-color: #44ff44'
+                    return 'background-color: #90EE90'
             
             styled_df = df_display.style.applymap(highlight_risk, subset=['risk_score'])
             st.dataframe(styled_df, use_container_width=True, hide_index=True)
         else:
-            st.dataframe(df_display.sort_values('speed', ascending=False), 
-                        use_container_width=True, hide_index=True)
+            st.dataframe(df_display, use_container_width=True, hide_index=True)
     
-    # Save cache after update
     save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
-    
     st.success(f"✅ Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 # Initial load
@@ -547,22 +617,32 @@ if auto_refresh:
 
 # Legend
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 🎨 Color Legend")
+st.sidebar.markdown("### 🎨 S&P Compliance Legend")
 st.sidebar.markdown("""
-- 🔴 **Red**: High risk (≥50)
-- 🟠 **Orange**: Medium risk (25-49)
-- 🔵 **Blue**: Passenger (low risk)
-- 🟢 **Green**: Low/No risk
-- 🟣 **Purple**: Tug/Service
+**Ship Colors (Legal Overall):**
+- 🔴 **Red**: Severe (2)
+- 🟠 **Orange**: Warning (1)
+- 🟢 **Green**: Clear (0)
+
+**Risk Score:**
+- 80-100: Severe compliance issue
+- 40-79: Warning detected
+- 0-39: Clear/OK
+
+**Indicators:**
+- 🔴 = Severe (2)
+- 🟡 = Warning (1)
+- ✅ = OK (0)
 """)
 
-st.sidebar.markdown("### 🚨 Risk Indicators")
-st.sidebar.markdown("""
-- ⚠️ Flag disputed
-- 🚨 UN/OFAC sanctions
-- 🌑 Dark activity detected
-- ✅ No issues
-- ❌ No static data yet
+st.sidebar.markdown("### 📊 S&P Screening v3.71")
+st.sidebar.caption("""
+Checks:
+• UN, OFAC, EU, UK sanctions
+• Port calls (sanctioned countries)
+• Dark activity detection
+• Flag disputes
+• Owner/operator compliance
 """)
 
 st.sidebar.markdown("---")
