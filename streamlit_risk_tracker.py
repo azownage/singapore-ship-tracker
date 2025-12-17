@@ -443,39 +443,37 @@ def update_map():
     
     # Create map
     with map_placeholder:
-        st.pydeck_chart(pdk.Deck(
-            map_style='mapbox://styles/mapbox/dark-v10',
-            initial_view_state=pdk.ViewState(
-                latitude=1.27,
-                longitude=103.85,
-                zoom=11,
-                pitch=45,
-            ),
-            layers=[
-                pdk.Layer(
-                    'ScatterplotLayer',
-                    data=df,
-                    get_position='[longitude, latitude]',
-                    get_color='color',
-                    get_radius=150,
-                    pickable=True,
-                    auto_highlight=True,
-                ),
-            ],
+        # Use simpler map configuration
+        view_state = pdk.ViewState(
+            latitude=1.27,
+            longitude=103.85,
+            zoom=11,
+            pitch=0,  # Flat view for better visibility
+        )
+        
+        # Create scatter layer
+        scatter_layer = pdk.Layer(
+            'ScatterplotLayer',
+            data=df,
+            get_position='[longitude, latitude]',
+            get_color='color',
+            get_radius=200,  # Larger for visibility
+            pickable=True,
+            auto_highlight=True,
+        )
+        
+        # Create deck with open street map (no token needed)
+        deck = pdk.Deck(
+            map_style='',  # Empty = use default open tiles
+            initial_view_state=view_state,
+            layers=[scatter_layer],
             tooltip={
-                'html': '''
-                <b>{name}</b><br/>
-                IMO: {imo}<br/>
-                Speed: {speed} kts<br/>
-                Risk Score: {risk_score}<br/>
-                Destination: {destination}
-                ''',
-                'style': {
-                    'backgroundColor': 'steelblue',
-                    'color': 'white'
-                }
+                'html': '<b>{name}</b><br/>IMO: {imo}<br/>Speed: {speed} kts<br/>Risk: {risk_score}<br/>Destination: {destination}',
+                'style': {'backgroundColor': 'steelblue', 'color': 'white'}
             }
-        ))
+        )
+        
+        st.pydeck_chart(deck)
     
     # Show detailed table - BULLETPROOF VERSION
     with table_placeholder:
