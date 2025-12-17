@@ -66,6 +66,8 @@ if 'ship_static_cache' not in st.session_state:
     st.session_state.ship_static_cache = ship_cache
     st.session_state.risk_data_cache = risk_cache
     st.session_state.last_save = time.time()
+    st.session_state.last_collection = None
+    st.session_state.current_df = None
 
 # S&P Maritime API Integration with COMPLETE Compliance Screening
 class SPMaritimeAPI:
@@ -474,7 +476,8 @@ map_placeholder = st.empty()
 stats_placeholder = st.empty()
 table_placeholder = st.empty()
 
-def update_map():
+def collect_new_data():
+    """Collect new AIS data and get S&P compliance"""
     sp_api = None
     if enable_risk_check and sp_username and sp_password:
         sp_api = SPMaritimeAPI(sp_username, sp_password)
@@ -484,40 +487,48 @@ def update_map():
             tracker = AISTracker()
             asyncio.run(tracker.collect_data(duration, ais_api_key))
             df = tracker.get_dataframe_with_risk(sp_api)
+            st.session_state.current_df = df
+            st.session_state.last_collection = time.time()
     
+    return df
+
+def display_data(df):
+    """Display data with current filter settings"""
     if df.empty:
         st.warning("⚠️ No ships detected. Try increasing collection time.")
         return
     
-    # Apply filters
-    if show_severe and 'legal_overall' in df.columns:
-        df = df[df['legal_overall'] == 2]
+    # Apply filters to dataframe
+    df_filtered = df.copy()
     
-    if show_warning and 'legal_overall' in df.columns:
-        df = df[df['legal_overall'] >= 1]
+    if show_severe and 'legal_overall' in df_filtered.columns:
+        df_filtered = df_filtered[df_filtered['legal_overall'] == 2]
     
-    if show_sanctioned and 'ship_un_sanction' in df.columns:
-        df = df[(df['ship_un_sanction'] == 2) | (df['ship_ofac_sanction'] == 2)]
+    if show_warning and 'legal_overall' in df_filtered.columns:
+        df_filtered = df_filtered[df_filtered['legal_overall'] >= 1]
     
-    if df.empty:
+    if show_sanctioned and 'ship_un_sanction' in df_filtered.columns:
+        df_filtered = df_filtered[(df_filtered['ship_un_sanction'] == 2) | (df_filtered['ship_ofac_sanction'] == 2)]
+    
+    if df_filtered.empty:
         st.info("ℹ️ No ships match the selected filters.")
         return
     
     # Display stats
     with stats_placeholder:
         cols = st.columns(6)
-        cols[0].metric("🚢 Total Ships", len(df))
-        cols[1].metric("⚡ Moving", len(df[df['speed'] > 1]))
+        cols[0].metric("🚢 Total Ships", len(df_filtered))
+        cols[1].metric("⚡ Moving", len(df_filtered[df_filtered['speed'] > 1]))
         
-        if 'has_static' in df.columns:
-            cols[2].metric("📡 Has Static", int(df['has_static'].sum()))
+        if 'has_static' in df_filtered.columns:
+            cols[2].metric("📡 Has Static", int(df_filtered['has_static'].sum()))
         
-        if 'legal_overall' in df.columns:
-            severe = len(df[df['legal_overall'] == 2])
-            warning = len(df[df['legal_overall'] == 1])
+        if 'legal_overall' in df_filtered.columns:
+            severe = len(df_filtered[df_filtered['legal_overall'] == 2])
+            warning = len(df_filtered[df_filtered['legal_overall'] == 1])
             cols[3].metric("🔴 Severe", severe)
             cols[4].metric("🟠 Warning", warning)
-            cols[5].metric("📊 Avg Risk", f"{df['risk_score'].mean():.0f}")
+            cols[5].metric("📊 Avg Risk", f"{df_filtered['risk_score'].mean():.0f}")
     
     # Create map
     with map_placeholder:
@@ -530,7 +541,7 @@ def update_map():
         
         scatter_layer = pdk.Layer(
             'ScatterplotLayer',
-            data=df,
+            data=df_filtered,
             get_position='[longitude, latitude]',
             get_color='color',
             get_radius=200,
@@ -554,7 +565,7 @@ def update_map():
     with table_placeholder:
         st.subheader("📋 S&P Compliance Screening Results")
         
-        available_cols = list(df.columns)
+        available_cols = list(df_filtered.columns)
         display_cols = []
         
         for col in ['name', 'imo', 'speed', 'destination', 'legal_overall', 'risk_score',
@@ -563,7 +574,7 @@ def update_map():
             if col in available_cols:
                 display_cols.append(col)
         
-        df_display = df[display_cols].copy()
+        df_display = df_filtered[display_cols].copy()
         
         # Format S&P values (2 = Severe, 1 = Warning, 0 = OK)
         def format_sp_value(val):
@@ -599,16 +610,24 @@ def update_map():
             st.dataframe(df_display, use_container_width=True, hide_index=True)
     
     save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
-    st.success(f"✅ Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    if st.session_state.last_collection:
+        st.success(f"✅ Last updated: {datetime.fromtimestamp(st.session_state.last_collection).strftime('%Y-%m-%d %H:%M:%S')}")
 
-# Initial load
-if 'initialized' not in st.session_state:
-    st.session_state.initialized = True
-    update_map()
+# Main execution
+# Check if we need to collect new data or just refilter existing
+if st.session_state.current_df is None:
+    # First run - collect data
+    df = collect_new_data()
+    display_data(df)
+else:
+    # Already have data - just refilter and display
+    display_data(st.session_state.current_df)
 
-# Manual refresh
+# Manual refresh button - collect NEW data
 if st.sidebar.button("🔄 Refresh Now", type="primary"):
-    update_map()
+    df = collect_new_data()
+    display_data(df)
 
 # Auto-refresh
 if auto_refresh:
