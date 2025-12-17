@@ -357,10 +357,14 @@ class AISTracker:
             imo = str(static.get('imo', '0'))
             
             # Get dimensions (A=bow, B=stern, C=port, D=starboard from antenna)
-            dimension_a = static.get('dimension_a', 0)
-            dimension_b = static.get('dimension_b', 0)
-            dimension_c = static.get('dimension_c', 0)
-            dimension_d = static.get('dimension_d', 0)
+            dimension_a = static.get('dimension_a', 0) if static.get('dimension_a') else 0
+            dimension_b = static.get('dimension_b', 0) if static.get('dimension_b') else 0
+            dimension_c = static.get('dimension_c', 0) if static.get('dimension_c') else 0
+            dimension_d = static.get('dimension_d', 0) if static.get('dimension_d') else 0
+            
+            # Get heading - prefer true heading, fallback to COG
+            true_heading = pos.get('true_heading', 511)
+            heading = true_heading if true_heading != 511 else pos.get('cog', 0)
             
             data.append({
                 'mmsi': mmsi,
@@ -370,7 +374,7 @@ class AISTracker:
                 'longitude': pos.get('longitude'),
                 'speed': pos.get('sog', 0),
                 'course': pos.get('cog', 0),
-                'heading': pos.get('true_heading', pos.get('cog', 0)),  # True heading or COG
+                'heading': heading,
                 'type': ship_type,
                 'length': dimension_a + dimension_b,
                 'width': dimension_c + dimension_d,
@@ -630,20 +634,27 @@ def display_data(df):
     
     # Display stats
     with stats_placeholder:
-        cols = st.columns(6)
+        cols = st.columns(7)
         cols[0].metric("🚢 Total Ships", len(df_filtered))
         cols[1].metric("⚡ Moving", len(df_filtered[df_filtered['speed'] > 1]))
         
         if 'has_static' in df_filtered.columns:
             cols[2].metric("📡 Has Static", int(df_filtered['has_static'].sum()))
         
+        # Show ships with/without dimensions
+        ships_with_dims = len(df_filtered[
+            (df_filtered['dimension_a'] > 0) | 
+            (df_filtered['dimension_b'] > 0)
+        ])
+        cols[3].metric("📐 With Dims", ships_with_dims)
+        
         if 'legal_overall' in df_filtered.columns:
             severe = len(df_filtered[df_filtered['legal_overall'] == 2])
             warning = len(df_filtered[df_filtered['legal_overall'] == 1])
             clear = len(df_filtered[df_filtered['legal_overall'] == 0])
-            cols[3].metric("🔴 Severe", severe)
-            cols[4].metric("🟡 Warning", warning)
-            cols[5].metric("✅ Clear", clear)
+            cols[4].metric("🔴 Severe", severe)
+            cols[5].metric("🟡 Warning", warning)
+            cols[6].metric("✅ Clear", clear)
     
     # Create map
     with map_placeholder:
@@ -654,24 +665,56 @@ def display_data(df):
             pitch=0,
         )
         
-        # Use PolygonLayer to draw actual vessel shapes
-        polygon_layer = pdk.Layer(
-            'PolygonLayer',
-            data=df_filtered,
-            get_polygon='vessel_polygon',
-            get_fill_color='color',
-            get_line_color=[255, 255, 255, 100],
-            line_width_min_pixels=1,
-            pickable=True,
-            auto_highlight=True,
-            filled=True,
-            extruded=False,
-        )
+        # Separate vessels with and without dimensions
+        df_with_dims = df_filtered[
+            (df_filtered['dimension_a'] > 0) | 
+            (df_filtered['dimension_b'] > 0) | 
+            (df_filtered['dimension_c'] > 0) | 
+            (df_filtered['dimension_d'] > 0)
+        ].copy()
+        
+        df_no_dims = df_filtered[
+            (df_filtered['dimension_a'] == 0) & 
+            (df_filtered['dimension_b'] == 0) & 
+            (df_filtered['dimension_c'] == 0) & 
+            (df_filtered['dimension_d'] == 0)
+        ].copy()
+        
+        layers = []
+        
+        # Layer 1: Vessels with dimensions (polygons)
+        if len(df_with_dims) > 0:
+            polygon_layer = pdk.Layer(
+                'PolygonLayer',
+                data=df_with_dims,
+                get_polygon='vessel_polygon',
+                get_fill_color='color',
+                get_line_color=[255, 255, 255, 100],
+                line_width_min_pixels=1,
+                pickable=True,
+                auto_highlight=True,
+                filled=True,
+                extruded=False,
+            )
+            layers.append(polygon_layer)
+        
+        # Layer 2: Vessels without dimensions (dots)
+        if len(df_no_dims) > 0:
+            scatter_layer = pdk.Layer(
+                'ScatterplotLayer',
+                data=df_no_dims,
+                get_position='[longitude, latitude]',
+                get_color='color',
+                get_radius=50,
+                pickable=True,
+                auto_highlight=True,
+            )
+            layers.append(scatter_layer)
         
         deck = pdk.Deck(
             map_style='',
             initial_view_state=view_state,
-            layers=[polygon_layer],
+            layers=layers,
             tooltip={
                 'html': '<b>{name}</b><br/>Type: {type_name}<br/>Length: {length}m × Width: {width}m<br/>IMO: {imo}<br/>Speed: {speed} kts<br/>Legal Overall: {legal_overall}',
                 'style': {'backgroundColor': 'steelblue', 'color': 'white'}
