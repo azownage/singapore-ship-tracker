@@ -479,18 +479,36 @@ def update_map():
     with table_placeholder:
         st.subheader("📋 Vessel Details")
         
+        # Start with base columns that always exist
         display_cols = ['name', 'imo', 'speed', 'destination', 'has_static']
         
+        # Only add risk columns if they exist in the dataframe
         if 'risk_score' in df.columns:
-            display_cols.extend(['risk_score', 'flag_disputed', 'un_sanction', 'ofac_sanction', 'dark_activity'])
+            risk_cols = ['risk_score']
+            if 'flag_disputed' in df.columns:
+                risk_cols.append('flag_disputed')
+            if 'un_sanction' in df.columns:
+                risk_cols.append('un_sanction')
+            if 'ofac_sanction' in df.columns:
+                risk_cols.append('ofac_sanction')
+            if 'dark_activity' in df.columns:
+                risk_cols.append('dark_activity')
+            
+            display_cols.extend(risk_cols)
             
             # Format risk indicators
             df_display = df[display_cols].copy()
             df_display['has_static'] = df_display['has_static'].map({True: '✅', False: '❌'})
-            df_display['flag_disputed'] = df_display['flag_disputed'].map({True: '⚠️', False: '✅', None: '-'})
-            df_display['un_sanction'] = df_display['un_sanction'].map({True: '🚨', False: '✅', None: '-'})
-            df_display['ofac_sanction'] = df_display['ofac_sanction'].map({True: '🚨', False: '✅', None: '-'})
-            df_display['dark_activity'] = df_display['dark_activity'].map({True: '🌑', False: '✅', None: '-'})
+            
+            # Only format columns that exist
+            if 'flag_disputed' in df_display.columns:
+                df_display['flag_disputed'] = df_display['flag_disputed'].map({True: '⚠️', False: '✅', None: '-'})
+            if 'un_sanction' in df_display.columns:
+                df_display['un_sanction'] = df_display['un_sanction'].map({True: '🚨', False: '✅', None: '-'})
+            if 'ofac_sanction' in df_display.columns:
+                df_display['ofac_sanction'] = df_display['ofac_sanction'].map({True: '🚨', False: '✅', None: '-'})
+            if 'dark_activity' in df_display.columns:
+                df_display['dark_activity'] = df_display['dark_activity'].map({True: '🌑', False: '✅', None: '-'})
             
             # Color code risk scores
             def highlight_risk(val):
