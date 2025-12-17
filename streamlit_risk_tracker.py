@@ -232,32 +232,12 @@ class SPMaritimeAPI:
             'owner_un': owner_un,
             'owner_ofac_country': owner_ofac_country,
             
-            # Risk Score (0-100 for display)
-            'risk_score': self._calculate_risk_score(legal_overall, all_scores),
-            
             'cached_at': datetime.now().isoformat()
         }
     
     def _calculate_risk_score(self, legal_overall: int, all_scores: List[int]) -> int:
-        """
-        Calculate 0-100 risk score based on S&P compliance
-        
-        Per S&P Spec:
-        - Legal Overall 2 = Severe (80-100 points)
-        - Legal Overall 1 = Warning (40-79 points)
-        - Legal Overall 0 = Clear (0-39 points)
-        """
-        if legal_overall == 2:
-            # Severe - base 80, add 4 points per additional severe issue
-            severe_count = sum(1 for s in all_scores if s == 2)
-            return min(80 + (severe_count * 4), 100)
-        elif legal_overall == 1:
-            # Warning - base 40, add 5 points per warning
-            warning_count = sum(1 for s in all_scores if s == 1)
-            return min(40 + (warning_count * 5), 79)
-        else:
-            # Clear
-            return 0
+        """No longer used - keeping for compatibility"""
+        return 0
 
 # AIS Tracker
 class AISTracker:
@@ -289,7 +269,8 @@ class AISTracker:
         async with websockets.connect("wss://stream.aisstream.io/v0/stream") as ws:
             subscription = {
                 "APIKey": api_key,
-                "BoundingBoxes": [[[1.22, 103.80], [1.32, 103.92]]],
+                # Expanded to cover all Singapore waters including approaches
+                "BoundingBoxes": [[[1.15, 103.55], [1.50, 104.10]]],
                 "FilterMessageTypes": ["PositionReport", "ShipStaticData"]
             }
             
@@ -321,6 +302,7 @@ class AISTracker:
             'longitude': position_data.get('Longitude'),
             'sog': position_data.get('Sog', 0),
             'cog': position_data.get('Cog', 0),
+            'true_heading': position_data.get('TrueHeading', 511),  # 511 = not available
             'nav_status': position_data.get('NavigationalStatus', 15),
             'ship_name': metadata.get('ShipName', 'Unknown'),
             'timestamp': datetime.now().isoformat()
@@ -341,6 +323,10 @@ class AISTracker:
             'imo': imo,
             'type': static_data.get('Type'),
             'length': dimension.get('A', 0) + dimension.get('B', 0),
+            'dimension_a': dimension.get('A', 0),
+            'dimension_b': dimension.get('B', 0),
+            'dimension_c': dimension.get('C', 0),
+            'dimension_d': dimension.get('D', 0),
             'destination': static_data.get('Destination', 'Unknown'),
             'call_sign': static_data.get('CallSign', ''),
             'cached_at': datetime.now().isoformat()
@@ -370,6 +356,12 @@ class AISTracker:
             ship_type = static.get('type')
             imo = str(static.get('imo', '0'))
             
+            # Get dimensions (A=bow, B=stern, C=port, D=starboard from antenna)
+            dimension_a = static.get('dimension_a', 0)
+            dimension_b = static.get('dimension_b', 0)
+            dimension_c = static.get('dimension_c', 0)
+            dimension_d = static.get('dimension_d', 0)
+            
             data.append({
                 'mmsi': mmsi,
                 'name': name,
@@ -378,12 +370,17 @@ class AISTracker:
                 'longitude': pos.get('longitude'),
                 'speed': pos.get('sog', 0),
                 'course': pos.get('cog', 0),
+                'heading': pos.get('true_heading', pos.get('cog', 0)),  # True heading or COG
                 'type': ship_type,
-                'length': static.get('length', 0),
+                'length': dimension_a + dimension_b,
+                'width': dimension_c + dimension_d,
+                'dimension_a': dimension_a,
+                'dimension_b': dimension_b,
+                'dimension_c': dimension_c,
+                'dimension_d': dimension_d,
                 'destination': (static.get('destination') or 'Unknown').strip(),
                 'call_sign': static.get('call_sign', ''),
                 'legal_overall': 0,
-                'risk_score': 0,
                 'has_static': bool(static.get('name')),
                 'color': self.get_ship_color(ship_type, 0)
             })
@@ -405,7 +402,6 @@ class AISTracker:
                     legal_overall = risk_info.get('legal_overall', 0)
                     
                     df.at[idx, 'legal_overall'] = legal_overall
-                    df.at[idx, 'risk_score'] = risk_info.get('risk_score', 0)
                     df.at[idx, 'flag_name'] = risk_info.get('flag_name', '')
                     df.at[idx, 'registered_owner'] = risk_info.get('registered_owner', '')
                     
@@ -421,7 +417,112 @@ class AISTracker:
                     # Update color based on legal overall
                     df.at[idx, 'color'] = self.get_ship_color(row['type'], legal_overall)
         
+        # Add vessel type names
+        df['type_name'] = df['type'].apply(self._get_vessel_type_name)
+        
+        # Calculate vessel polygon coordinates
+        df['vessel_polygon'] = df.apply(self._create_vessel_polygon, axis=1)
+        
         return df
+    
+    def _create_vessel_polygon(self, row):
+        """
+        Create vessel polygon using actual dimensions and antenna position
+        
+        AIS Dimensions:
+        - A: Distance from antenna to bow (front)
+        - B: Distance from antenna to stern (back)
+        - C: Distance from antenna to port (left)
+        - D: Distance from antenna to starboard (right)
+        """
+        lat = row['latitude']
+        lon = row['longitude']
+        heading = row['heading']
+        
+        # Get dimensions (default to small dot if unknown)
+        dim_a = row['dimension_a'] if row['dimension_a'] > 0 else 5
+        dim_b = row['dimension_b'] if row['dimension_b'] > 0 else 5
+        dim_c = row['dimension_c'] if row['dimension_c'] > 0 else 2
+        dim_d = row['dimension_d'] if row['dimension_d'] > 0 else 2
+        
+        # Convert heading to radians
+        import math
+        heading_rad = math.radians(heading if heading != 511 else 0)  # 511 = not available
+        
+        # Calculate corners relative to antenna position
+        # Coordinates in meters, then convert to lat/lon
+        corners = [
+            (-dim_c, dim_a),   # Port bow (front left)
+            (dim_d, dim_a),    # Starboard bow (front right)
+            (dim_d, -dim_b),   # Starboard stern (back right)
+            (-dim_c, -dim_b),  # Port stern (back left)
+        ]
+        
+        # Rotate corners by heading and convert to lat/lon
+        polygon = []
+        for x, y in corners:
+            # Rotate
+            rotated_x = x * math.cos(heading_rad) - y * math.sin(heading_rad)
+            rotated_y = x * math.sin(heading_rad) + y * math.cos(heading_rad)
+            
+            # Convert meters to degrees (approximate)
+            # 1 degree latitude ≈ 111,111 meters
+            # 1 degree longitude ≈ 111,111 * cos(latitude) meters
+            lat_offset = rotated_y / 111111.0
+            lon_offset = rotated_x / (111111.0 * math.cos(math.radians(lat)))
+            
+            polygon.append([lon + lon_offset, lat + lat_offset])
+        
+        return polygon
+    
+    def _get_vessel_type_name(self, type_code):
+        """Convert AIS type code to readable name"""
+        if pd.isna(type_code) or type_code == 0:
+            return 'Unknown'
+        
+        type_code = int(type_code)
+        
+        # AIS Ship Type Codes
+        if type_code == 30:
+            return 'Fishing'
+        elif type_code == 31 or type_code == 32:
+            return 'Towing'
+        elif type_code == 33:
+            return 'Dredging'
+        elif type_code == 34:
+            return 'Diving'
+        elif type_code == 35:
+            return 'Military'
+        elif type_code == 36:
+            return 'Sailing'
+        elif type_code == 37:
+            return 'Pleasure'
+        elif 40 <= type_code <= 49:
+            return 'High Speed Craft'
+        elif type_code == 50:
+            return 'Pilot'
+        elif type_code == 51:
+            return 'SAR'
+        elif type_code == 52:
+            return 'Tug'
+        elif type_code == 53:
+            return 'Port Tender'
+        elif type_code == 54:
+            return 'Anti-Pollution'
+        elif type_code == 55:
+            return 'Law Enforcement'
+        elif type_code == 58:
+            return 'Medical'
+        elif 60 <= type_code <= 69:
+            return 'Passenger'
+        elif 70 <= type_code <= 79:
+            return 'Cargo'
+        elif 80 <= type_code <= 89:
+            return 'Tanker'
+        elif 90 <= type_code <= 99:
+            return 'Other'
+        else:
+            return 'Unknown'
 
 
 # Streamlit UI
@@ -470,6 +571,15 @@ show_severe = st.sidebar.checkbox("Severe only (Legal Overall = 2)", value=False
 show_warning = st.sidebar.checkbox("Warning+ (Legal Overall ≥ 1)", value=False)
 show_sanctioned = st.sidebar.checkbox("UN/OFAC sanctions only", value=False)
 
+# Vessel Type Filter
+st.sidebar.header("🚢 Vessel Type Filter")
+vessel_types = st.sidebar.multiselect(
+    "Filter by vessel type:",
+    options=['All', 'Cargo', 'Tanker', 'Passenger', 'Tug', 'Fishing', 'High Speed Craft', 
+             'Pilot', 'SAR', 'Port Tender', 'Law Enforcement', 'Other', 'Unknown'],
+    default=['All']
+)
+
 # Main content
 status_placeholder = st.empty()
 map_placeholder = st.empty()
@@ -501,6 +611,10 @@ def display_data(df):
     # Apply filters to dataframe
     df_filtered = df.copy()
     
+    # Vessel type filter
+    if 'type_name' in df_filtered.columns and 'All' not in vessel_types:
+        df_filtered = df_filtered[df_filtered['type_name'].isin(vessel_types)]
+    
     if show_severe and 'legal_overall' in df_filtered.columns:
         df_filtered = df_filtered[df_filtered['legal_overall'] == 2]
     
@@ -526,9 +640,10 @@ def display_data(df):
         if 'legal_overall' in df_filtered.columns:
             severe = len(df_filtered[df_filtered['legal_overall'] == 2])
             warning = len(df_filtered[df_filtered['legal_overall'] == 1])
+            clear = len(df_filtered[df_filtered['legal_overall'] == 0])
             cols[3].metric("🔴 Severe", severe)
-            cols[4].metric("🟠 Warning", warning)
-            cols[5].metric("📊 Avg Risk", f"{df_filtered['risk_score'].mean():.0f}")
+            cols[4].metric("🟡 Warning", warning)
+            cols[5].metric("✅ Clear", clear)
     
     # Create map
     with map_placeholder:
@@ -539,22 +654,26 @@ def display_data(df):
             pitch=0,
         )
         
-        scatter_layer = pdk.Layer(
-            'ScatterplotLayer',
+        # Use PolygonLayer to draw actual vessel shapes
+        polygon_layer = pdk.Layer(
+            'PolygonLayer',
             data=df_filtered,
-            get_position='[longitude, latitude]',
-            get_color='color',
-            get_radius=200,
+            get_polygon='vessel_polygon',
+            get_fill_color='color',
+            get_line_color=[255, 255, 255, 100],
+            line_width_min_pixels=1,
             pickable=True,
             auto_highlight=True,
+            filled=True,
+            extruded=False,
         )
         
         deck = pdk.Deck(
             map_style='',
             initial_view_state=view_state,
-            layers=[scatter_layer],
+            layers=[polygon_layer],
             tooltip={
-                'html': '<b>{name}</b><br/>IMO: {imo}<br/>Speed: {speed} kts<br/>Risk: {risk_score}<br/>Legal Overall: {legal_overall}',
+                'html': '<b>{name}</b><br/>Type: {type_name}<br/>Length: {length}m × Width: {width}m<br/>IMO: {imo}<br/>Speed: {speed} kts<br/>Legal Overall: {legal_overall}',
                 'style': {'backgroundColor': 'steelblue', 'color': 'white'}
             }
         )
@@ -568,7 +687,7 @@ def display_data(df):
         available_cols = list(df_filtered.columns)
         display_cols = []
         
-        for col in ['name', 'imo', 'speed', 'destination', 'legal_overall', 'risk_score',
+        for col in ['name', 'type_name', 'length', 'width', 'imo', 'speed', 'destination', 'legal_overall',
                     'ship_un_sanction', 'ship_ofac_sanction', 'dark_activity', 'flag_disputed',
                     'port_call_3m', 'owner_un', 'owner_ofac']:
             if col in available_cols:
@@ -592,22 +711,7 @@ def display_data(df):
             if col in df_display.columns:
                 df_display[col] = df_display[col].apply(format_sp_value)
         
-        # Color code risk scores
-        if 'risk_score' in df_display.columns:
-            def highlight_risk(val):
-                if pd.isna(val) or val == 0:
-                    return ''
-                elif val >= 80:
-                    return 'background-color: #ff0000; color: white; font-weight: bold'
-                elif val >= 40:
-                    return 'background-color: #ffaa00; color: white'
-                else:
-                    return 'background-color: #90EE90'
-            
-            styled_df = df_display.style.applymap(highlight_risk, subset=['risk_score'])
-            st.dataframe(styled_df, use_container_width=True, hide_index=True)
-        else:
-            st.dataframe(df_display, use_container_width=True, hide_index=True)
+        st.dataframe(df_display, use_container_width=True, hide_index=True)
     
     save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
     
@@ -643,11 +747,6 @@ st.sidebar.markdown("""
 - 🟠 **Orange**: Warning (1)
 - 🟢 **Green**: Clear (0)
 
-**Risk Score:**
-- 80-100: Severe compliance issue
-- 40-79: Warning detected
-- 0-39: Clear/OK
-
 **Indicators:**
 - 🔴 = Severe (2)
 - 🟡 = Warning (1)
@@ -662,6 +761,18 @@ Checks:
 • Dark activity detection
 • Flag disputes
 • Owner/operator compliance
+""")
+
+st.sidebar.markdown("### 🚢 Vessel Types")
+st.sidebar.caption("""
+Based on AIS Ship Type Codes:
+• Cargo (70-79)
+• Tanker (80-89)
+• Passenger (60-69)
+• Tug (52)
+• Fishing (30)
+• High Speed Craft (40-49)
+• Others as per AIS standard
 """)
 
 st.sidebar.markdown("---")
