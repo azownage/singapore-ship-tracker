@@ -444,11 +444,11 @@ class AISTracker:
             lon = row['longitude']
             heading = row['heading']
             
-            # Get dimensions (default to small dot if unknown)
-            dim_a = row['dimension_a'] if row['dimension_a'] > 0 else 5
-            dim_b = row['dimension_b'] if row['dimension_b'] > 0 else 5
-            dim_c = row['dimension_c'] if row['dimension_c'] > 0 else 2
-            dim_d = row['dimension_d'] if row['dimension_d'] > 0 else 2
+            # Get dimensions - if no real dimensions, use LARGER defaults for visibility
+            dim_a = row['dimension_a'] if row['dimension_a'] > 0 else 30  # 30m bow (was 5)
+            dim_b = row['dimension_b'] if row['dimension_b'] > 0 else 30  # 30m stern (was 5)
+            dim_c = row['dimension_c'] if row['dimension_c'] > 0 else 8   # 8m port (was 2)
+            dim_d = row['dimension_d'] if row['dimension_d'] > 0 else 8   # 8m starboard (was 2)
             
             # Convert heading to radians
             import math
@@ -667,20 +667,20 @@ def display_data(df):
         if 'has_static' in df_filtered.columns:
             cols[2].metric("📡 Has Static", int(df_filtered['has_static'].sum()))
         
-        # Show ships with/without dimensions
-        ships_with_dims = len(df_filtered[
+        # Show ships with REAL dimensions vs estimated
+        ships_real_dims = len(df_filtered[
             (df_filtered['dimension_a'] > 0) | 
             (df_filtered['dimension_b'] > 0)
         ])
-        cols[3].metric("📐 With Dims", ships_with_dims)
+        ships_estimated = len(df_filtered) - ships_real_dims
+        cols[3].metric("📐 Real Dims", ships_real_dims)
+        cols[4].metric("📏 Estimated", ships_estimated, help="Yellow outline = estimated size")
         
         if 'legal_overall' in df_filtered.columns:
             severe = len(df_filtered[df_filtered['legal_overall'] == 2])
             warning = len(df_filtered[df_filtered['legal_overall'] == 1])
-            clear = len(df_filtered[df_filtered['legal_overall'] == 0])
-            cols[4].metric("🔴 Severe", severe)
-            cols[5].metric("🟡 Warning", warning)
-            cols[6].metric("✅ Clear", clear)
+            cols[5].metric("🔴 Severe", severe)
+            cols[6].metric("🟡 Warning", warning)
     
     # Create map
     with map_placeholder:
@@ -691,27 +691,27 @@ def display_data(df):
             pitch=0,
         )
         
-        # Separate vessels with and without valid dimensions
-        # Check if vessel_polygon exists and has data
-        df_with_dims = df_filtered[
-            df_filtered['vessel_polygon'].apply(lambda x: isinstance(x, list) and len(x) > 0)
-        ].copy()
-        
-        df_no_dims = df_filtered[
-            df_filtered['vessel_polygon'].apply(lambda x: not isinstance(x, list) or len(x) == 0)
-        ].copy()
+        # ALL ships shown as polygons now (with real or estimated dimensions)
+        # Add outline color to distinguish real vs estimated
+        df_filtered['is_estimated'] = (df_filtered['dimension_a'] == 0) & (df_filtered['dimension_b'] == 0)
+        df_filtered['is_estimated'] = df_filtered['is_estimated'].apply(
+            lambda x: '⚠️ Estimated size' if x else 'Real dimensions'
+        )
+        df_filtered['line_color'] = df_filtered['is_estimated'].apply(
+            lambda x: [255, 255, 0, 200] if '⚠️' in x else [255, 255, 255, 150]  # Yellow = estimated, White = real
+        )
         
         layers = []
         
-        # Layer 1: Vessels with dimensions (polygons)
-        if len(df_with_dims) > 0:
+        # Single polygon layer for all vessels
+        if len(df_filtered) > 0:
             polygon_layer = pdk.Layer(
                 'PolygonLayer',
-                data=df_with_dims,
+                data=df_filtered,
                 get_polygon='vessel_polygon',
                 get_fill_color='color',
-                get_line_color=[255, 255, 255, 100],
-                line_width_min_pixels=1,
+                get_line_color='line_color',
+                line_width_min_pixels=2,
                 pickable=True,
                 auto_highlight=True,
                 filled=True,
@@ -719,28 +719,18 @@ def display_data(df):
             )
             layers.append(polygon_layer)
         
-        # Layer 2: Vessels without dimensions (dots)
-        if len(df_no_dims) > 0:
-            scatter_layer = pdk.Layer(
-                'ScatterplotLayer',
-                data=df_no_dims,
-                get_position='[longitude, latitude]',
-                get_color='color',
-                get_radius=50,
-                pickable=True,
-                auto_highlight=True,
-            )
-            layers.append(scatter_layer)
-        
         deck = pdk.Deck(
             map_style='',
             initial_view_state=view_state,
             layers=layers,
             tooltip={
-                'html': '<b>{name}</b><br/>Type: {type_name}<br/>Length: {length}m × Width: {width}m<br/>IMO: {imo}<br/>Speed: {speed} kts<br/>Legal Overall: {legal_overall}',
+                'html': '<b>{name}</b><br/>Type: {type_name}<br/>Length: {length}m × Width: {width}m<br/>{is_estimated}<br/>IMO: {imo}<br/>Speed: {speed} kts<br/>Legal Overall: {legal_overall}',
                 'style': {'backgroundColor': 'steelblue', 'color': 'white'}
             }
         )
+        
+        # Add note about estimated sizes
+        st.caption("⚠️ Ships with **yellow outline** have estimated dimensions (60m × 16m default). White outline = real AIS dimensions.")
         
         st.pydeck_chart(deck)
     
@@ -815,6 +805,15 @@ st.sidebar.markdown("""
 - 🔴 = Severe (2)
 - 🟡 = Warning (1)
 - ✅ = OK (0)
+""")
+
+st.sidebar.markdown("### 📐 Vessel Dimensions")
+st.sidebar.markdown("""
+**Outline Colors:**
+- ⬜ **White outline** = Real AIS dimensions
+- 🟨 **Yellow outline** = Estimated size (60m × 16m)
+
+Ships show estimated size until they broadcast static data with dimensions A, B, C, D.
 """)
 
 st.sidebar.markdown("### 📊 S&P Screening v3.71")
