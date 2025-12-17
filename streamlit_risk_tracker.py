@@ -68,6 +68,7 @@ if 'ship_static_cache' not in st.session_state:
     st.session_state.last_save = time.time()
     st.session_state.last_collection = None
     st.session_state.current_df = None
+    st.session_state.selected_vessel = None  # Track selected vessel for map centering
 
 # S&P Maritime API Integration with COMPLETE Compliance Screening
 class SPMaritimeAPI:
@@ -384,6 +385,7 @@ class AISTracker:
                 'dimension_d': dimension_d,
                 'destination': (static.get('destination') or 'Unknown').strip(),
                 'call_sign': static.get('call_sign', ''),
+                'nav_status': pos.get('nav_status', 15),
                 'legal_overall': 0,
                 'has_static': bool(static.get('name')),
                 'color': self.get_ship_color(ship_type, 0)
@@ -423,6 +425,9 @@ class AISTracker:
         
         # Add vessel type names
         df['type_name'] = df['type'].apply(self._get_vessel_type_name)
+        
+        # Add navigational status names
+        df['nav_status_name'] = df['nav_status'].apply(self._get_nav_status_name)
         
         # Calculate vessel polygon coordinates
         df['vessel_polygon'] = df.apply(self._create_vessel_polygon, axis=1)
@@ -531,6 +536,35 @@ class AISTracker:
             return 'Other'
         else:
             return 'Unknown'
+    
+    def _get_nav_status_name(self, nav_status_code):
+        """Convert AIS navigational status code to readable name"""
+        if pd.isna(nav_status_code):
+            return 'Unknown'
+        
+        nav_status_code = int(nav_status_code)
+        
+        # AIS Navigational Status Codes
+        status_map = {
+            0: 'Under way using engine',
+            1: 'At anchor',
+            2: 'Not under command',
+            3: 'Restricted maneuverability',
+            4: 'Constrained by draught',
+            5: 'Moored',
+            6: 'Aground',
+            7: 'Engaged in fishing',
+            8: 'Under way sailing',
+            9: 'Reserved',
+            10: 'Reserved',
+            11: 'Power-driven towing',
+            12: 'Power-driven pushing',
+            13: 'Reserved',
+            14: 'AIS-SART',
+            15: 'Unknown'
+        }
+        
+        return status_map.get(nav_status_code, 'Unknown')
 
 
 # Streamlit UI
@@ -588,6 +622,17 @@ vessel_types = st.sidebar.multiselect(
     default=['All']
 )
 
+# Navigational Status Filter
+st.sidebar.header("⚓ Navigational Status")
+nav_status = st.sidebar.multiselect(
+    "Filter by status:",
+    options=['All', 'Under way using engine', 'At anchor', 'Not under command', 
+             'Restricted maneuverability', 'Constrained by draught', 'Moored',
+             'Aground', 'Engaged in fishing', 'Under way sailing', 'Reserved',
+             'Power-driven towing', 'Power-driven pushing', 'AIS-SART'],
+    default=['All']
+)
+
 # Main content
 status_placeholder = st.empty()
 map_placeholder = st.empty()
@@ -622,6 +667,10 @@ def display_data(df):
     # Vessel type filter
     if 'type_name' in df_filtered.columns and 'All' not in vessel_types:
         df_filtered = df_filtered[df_filtered['type_name'].isin(vessel_types)]
+    
+    # Navigational status filter
+    if 'nav_status_name' in df_filtered.columns and 'All' not in nav_status:
+        df_filtered = df_filtered[df_filtered['nav_status_name'].isin(nav_status)]
     
     if show_severe and 'legal_overall' in df_filtered.columns:
         df_filtered = df_filtered[df_filtered['legal_overall'] == 2]
@@ -684,10 +733,28 @@ def display_data(df):
     
     # Create map
     with map_placeholder:
+        # Determine map center - use selected vessel if available
+        if st.session_state.selected_vessel is not None:
+            selected = df_filtered[df_filtered['mmsi'] == st.session_state.selected_vessel]
+            if not selected.empty:
+                center_lat = float(selected.iloc[0]['latitude'])
+                center_lon = float(selected.iloc[0]['longitude'])
+                zoom_level = 15  # Zoomed in to see vessel detail
+            else:
+                # Vessel not in filtered data, use default
+                center_lat = 1.27
+                center_lon = 103.85
+                zoom_level = 11
+        else:
+            # Default view - all Singapore
+            center_lat = 1.27
+            center_lon = 103.85
+            zoom_level = 11
+        
         view_state = pdk.ViewState(
-            latitude=1.27,
-            longitude=103.85,
-            zoom=11,
+            latitude=center_lat,
+            longitude=center_lon,
+            zoom=zoom_level,
             pitch=0,
         )
         
@@ -720,7 +787,7 @@ def display_data(df):
             initial_view_state=view_state,
             layers=layers,
             tooltip={
-                'html': '<b>{name}</b><br/>Type: {type_name}<br/>Length: {length}m × Width: {width}m<br/>{is_estimated}<br/>IMO: {imo}<br/>Speed: {speed} kts<br/>Legal Overall: {legal_overall}',
+                'html': '<b>{name}</b><br/>Type: {type_name}<br/>Status: {nav_status_name}<br/>Length: {length}m × Width: {width}m<br/>{is_estimated}<br/>IMO: {imo}<br/>Speed: {speed} kts<br/>Legal Overall: {legal_overall}',
                 'style': {'backgroundColor': 'steelblue', 'color': 'white'}
             }
         )
@@ -734,7 +801,7 @@ def display_data(df):
         available_cols = list(df_filtered.columns)
         display_cols = []
         
-        for col in ['name', 'type_name', 'length', 'width', 'imo', 'speed', 'destination', 'legal_overall',
+        for col in ['name', 'type_name', 'nav_status_name', 'length', 'width', 'imo', 'speed', 'destination', 'legal_overall',
                     'ship_un_sanction', 'ship_ofac_sanction', 'dark_activity', 'flag_disputed',
                     'port_call_3m', 'owner_un', 'owner_ofac']:
             if col in available_cols:
@@ -759,6 +826,53 @@ def display_data(df):
                 df_display[col] = df_display[col].apply(format_sp_value)
         
         st.dataframe(df_display, use_container_width=True, hide_index=True)
+        
+        # Add "View on Map" section below table
+        st.markdown("---")
+        st.markdown("### 🗺️ View Vessel on Map")
+        
+        # Create columns for better layout
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            # Dropdown to select vessel
+            vessel_options = ['Select a vessel...'] + [
+                f"{row['name']} ({row['type_name']}) - Speed: {row['speed']} kts" 
+                for _, row in df_filtered.iterrows()
+            ]
+            
+            selected_option = st.selectbox(
+                "Select vessel to view on map:",
+                options=vessel_options,
+                key='vessel_selector'
+            )
+        
+        with col2:
+            st.write("")  # Spacing
+            st.write("")  # Spacing
+            if st.button("🎯 Center on Map", type="primary", disabled=(selected_option == 'Select a vessel...')):
+                if selected_option != 'Select a vessel...':
+                    # Extract vessel name from selection
+                    vessel_name = selected_option.split(' (')[0]
+                    # Find vessel in dataframe
+                    vessel = df_filtered[df_filtered['name'] == vessel_name]
+                    if not vessel.empty:
+                        st.session_state.selected_vessel = vessel.iloc[0]['mmsi']
+                        st.rerun()
+        
+        # Show currently selected vessel
+        if st.session_state.selected_vessel is not None:
+            selected = df_filtered[df_filtered['mmsi'] == st.session_state.selected_vessel]
+            if not selected.empty:
+                st.success(f"🎯 Map centered on: **{selected.iloc[0]['name']}** (Zoom level: 15)")
+                if st.button("↩️ Reset to Full View"):
+                    st.session_state.selected_vessel = None
+                    st.rerun()
+            else:
+                st.warning("⚠️ Selected vessel not in current filter. Showing full view.")
+                if st.button("↩️ Reset to Full View"):
+                    st.session_state.selected_vessel = None
+                    st.rerun()
     
     save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
     
@@ -833,6 +947,18 @@ Based on AIS Ship Type Codes:
 • Fishing (30)
 • High Speed Craft (40-49)
 • Others as per AIS standard
+""")
+
+st.sidebar.markdown("### ⚓ Navigational Status")
+st.sidebar.caption("""
+Common statuses:
+• Under way using engine (moving)
+• At anchor (anchored)
+• Moored (tied to dock)
+• Not under command (disabled)
+• Restricted maneuverability (limited)
+• Engaged in fishing (fishing ops)
+• Aground (run aground)
 """)
 
 st.sidebar.markdown("---")
