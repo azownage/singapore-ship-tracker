@@ -439,45 +439,49 @@ class AISTracker:
         - C: Distance from antenna to port (left)
         - D: Distance from antenna to starboard (right)
         """
-        lat = row['latitude']
-        lon = row['longitude']
-        heading = row['heading']
-        
-        # Get dimensions (default to small dot if unknown)
-        dim_a = row['dimension_a'] if row['dimension_a'] > 0 else 5
-        dim_b = row['dimension_b'] if row['dimension_b'] > 0 else 5
-        dim_c = row['dimension_c'] if row['dimension_c'] > 0 else 2
-        dim_d = row['dimension_d'] if row['dimension_d'] > 0 else 2
-        
-        # Convert heading to radians
-        import math
-        heading_rad = math.radians(heading if heading != 511 else 0)  # 511 = not available
-        
-        # Calculate corners relative to antenna position
-        # Coordinates in meters, then convert to lat/lon
-        corners = [
-            (-dim_c, dim_a),   # Port bow (front left)
-            (dim_d, dim_a),    # Starboard bow (front right)
-            (dim_d, -dim_b),   # Starboard stern (back right)
-            (-dim_c, -dim_b),  # Port stern (back left)
-        ]
-        
-        # Rotate corners by heading and convert to lat/lon
-        polygon = []
-        for x, y in corners:
-            # Rotate
-            rotated_x = x * math.cos(heading_rad) - y * math.sin(heading_rad)
-            rotated_y = x * math.sin(heading_rad) + y * math.cos(heading_rad)
+        try:
+            lat = row['latitude']
+            lon = row['longitude']
+            heading = row['heading']
             
-            # Convert meters to degrees (approximate)
-            # 1 degree latitude ≈ 111,111 meters
-            # 1 degree longitude ≈ 111,111 * cos(latitude) meters
-            lat_offset = rotated_y / 111111.0
-            lon_offset = rotated_x / (111111.0 * math.cos(math.radians(lat)))
+            # Get dimensions (default to small dot if unknown)
+            dim_a = row['dimension_a'] if row['dimension_a'] > 0 else 5
+            dim_b = row['dimension_b'] if row['dimension_b'] > 0 else 5
+            dim_c = row['dimension_c'] if row['dimension_c'] > 0 else 2
+            dim_d = row['dimension_d'] if row['dimension_d'] > 0 else 2
             
-            polygon.append([lon + lon_offset, lat + lat_offset])
-        
-        return polygon
+            # Convert heading to radians
+            import math
+            heading_rad = math.radians(heading if heading != 511 else 0)  # 511 = not available
+            
+            # Calculate corners relative to antenna position
+            # Coordinates in meters, then convert to lat/lon
+            corners = [
+                (-dim_c, dim_a),   # Port bow (front left)
+                (dim_d, dim_a),    # Starboard bow (front right)
+                (dim_d, -dim_b),   # Starboard stern (back right)
+                (-dim_c, -dim_b),  # Port stern (back left)
+            ]
+            
+            # Rotate corners by heading and convert to lat/lon
+            polygon = []
+            for x, y in corners:
+                # Rotate
+                rotated_x = x * math.cos(heading_rad) - y * math.sin(heading_rad)
+                rotated_y = x * math.sin(heading_rad) + y * math.cos(heading_rad)
+                
+                # Convert meters to degrees (approximate)
+                # 1 degree latitude ≈ 111,111 meters
+                # 1 degree longitude ≈ 111,111 * cos(latitude) meters
+                lat_offset = rotated_y / 111111.0
+                lon_offset = rotated_x / (111111.0 * math.cos(math.radians(lat)))
+                
+                polygon.append([lon + lon_offset, lat + lat_offset])
+            
+            return polygon
+        except Exception as e:
+            # Fallback to empty list if error
+            return []
     
     def _get_vessel_type_name(self, type_code):
         """Convert AIS type code to readable name"""
@@ -632,6 +636,28 @@ def display_data(df):
         st.info("ℹ️ No ships match the selected filters.")
         return
     
+    # Debug info - show sample data
+    with st.expander("🔍 Debug Info - Click to expand"):
+        st.write(f"Total ships in filtered data: {len(df_filtered)}")
+        st.write(f"Ships with dimension_a > 0: {len(df_filtered[df_filtered['dimension_a'] > 0])}")
+        st.write(f"Ships with dimension_b > 0: {len(df_filtered[df_filtered['dimension_b'] > 0])}")
+        
+        # Show sample ship data
+        if len(df_filtered) > 0:
+            sample = df_filtered.iloc[0]
+            st.write("Sample ship data:")
+            st.json({
+                'name': sample['name'],
+                'dimension_a': float(sample['dimension_a']),
+                'dimension_b': float(sample['dimension_b']),
+                'dimension_c': float(sample['dimension_c']),
+                'dimension_d': float(sample['dimension_d']),
+                'length': float(sample['length']),
+                'width': float(sample['width']),
+                'has_polygon': len(sample.get('vessel_polygon', [])) > 0,
+                'polygon_points': len(sample.get('vessel_polygon', []))
+            })
+    
     # Display stats
     with stats_placeholder:
         cols = st.columns(7)
@@ -665,19 +691,14 @@ def display_data(df):
             pitch=0,
         )
         
-        # Separate vessels with and without dimensions
+        # Separate vessels with and without valid dimensions
+        # Check if vessel_polygon exists and has data
         df_with_dims = df_filtered[
-            (df_filtered['dimension_a'] > 0) | 
-            (df_filtered['dimension_b'] > 0) | 
-            (df_filtered['dimension_c'] > 0) | 
-            (df_filtered['dimension_d'] > 0)
+            df_filtered['vessel_polygon'].apply(lambda x: isinstance(x, list) and len(x) > 0)
         ].copy()
         
         df_no_dims = df_filtered[
-            (df_filtered['dimension_a'] == 0) & 
-            (df_filtered['dimension_b'] == 0) & 
-            (df_filtered['dimension_c'] == 0) & 
-            (df_filtered['dimension_d'] == 0)
+            df_filtered['vessel_polygon'].apply(lambda x: not isinstance(x, list) or len(x) == 0)
         ].copy()
         
         layers = []
