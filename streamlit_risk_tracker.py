@@ -200,18 +200,22 @@ class AISTracker:
         # Collect all valid ships
         for mmsi, ship_data in self.ships.items():
             pos = ship_data.get('latest_position')
-            static = ship_data.get('static_data', {})
+            static = ship_data.get('static_data') or {}
             
-            if not pos or pos.get('latitude') is None:
+            # Skip if no position data or invalid coordinates
+            if not pos or pos.get('latitude') is None or pos.get('longitude') is None:
                 continue
             
-            name = static.get('name', pos.get('ship_name', 'Unknown'))
+            # Safely get ship name
+            name = static.get('name') or pos.get('ship_name') or 'Unknown'
+            name = name.strip() if name else 'Unknown'
+            
             ship_type = static.get('type')
-            imo = static.get('imo', '0')
+            imo = str(static.get('imo', '0'))
             
             data.append({
                 'mmsi': mmsi,
-                'name': name.strip() if name else 'Unknown',
+                'name': name,
                 'imo': imo,
                 'latitude': pos.get('latitude'),
                 'longitude': pos.get('longitude'),
@@ -219,7 +223,7 @@ class AISTracker:
                 'course': pos.get('cog', 0),
                 'type': ship_type,
                 'length': static.get('length', 0),
-                'destination': (static.get('destination', '') or 'Unknown').strip(),
+                'destination': (static.get('destination') or 'Unknown').strip(),
                 'call_sign': static.get('call_sign', ''),
                 'risk_score': 0,
                 'color': self.get_ship_color(ship_type, 0)
@@ -231,9 +235,9 @@ class AISTracker:
             return df
         
         # Get IMO numbers for risk checking
-        valid_imos = [str(imo) for imo in df['imo'].unique() if imo != '0' and imo]
+        valid_imos = [str(imo) for imo in df['imo'].unique() if imo and imo != '0']
         
-        if valid_imos:
+        if valid_imos and sp_api:
             # Get risk data from S&P API
             with st.spinner('🔍 Checking S&P Maritime risk indicators...'):
                 risk_data = sp_api.get_ship_risk_data(valid_imos)
