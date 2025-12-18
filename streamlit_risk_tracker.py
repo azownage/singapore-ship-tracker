@@ -714,9 +714,9 @@ def display_data(df):
                     'has_polygon': len(sample.get('vessel_polygon', [])) > 0,
                     'polygon_points': len(sample.get('vessel_polygon', []))
                 })
-    
-    # Display stats
-    with stats_placeholder:
+        
+        # Display stats
+        with stats_placeholder:
         cols = st.columns(7)
         cols[0].metric("🚢 Total Ships", len(df_filtered))
         cols[1].metric("⚡ Moving", len(df_filtered[df_filtered['speed'] > 1]))
@@ -740,7 +740,7 @@ def display_data(df):
             cols[6].metric("🟡 Warning", warning)
     
     # Create map
-    with map_placeholder:
+        with map_placeholder:
         # Determine map center - use selected vessel if available
         if st.session_state.selected_vessel is not None:
             selected = df_filtered[df_filtered['mmsi'] == st.session_state.selected_vessel]
@@ -894,7 +894,7 @@ def display_data(df):
         st.pydeck_chart(deck)
     
     # Show table
-    with table_placeholder:
+        with table_placeholder:
         st.subheader("📋 S&P Compliance Screening Results")
         
         available_cols = list(df_filtered.columns)
