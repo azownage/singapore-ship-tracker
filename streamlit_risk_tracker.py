@@ -717,32 +717,32 @@ def display_data(df):
         
         # Display stats
         with stats_placeholder:
-        cols = st.columns(7)
-        cols[0].metric("🚢 Total Ships", len(df_filtered))
-        cols[1].metric("⚡ Moving", len(df_filtered[df_filtered['speed'] > 1]))
+            cols = st.columns(7)
+            cols[0].metric("🚢 Total Ships", len(df_filtered))
+            cols[1].metric("⚡ Moving", len(df_filtered[df_filtered['speed'] > 1]))
+            
+            if 'has_static' in df_filtered.columns:
+                cols[2].metric("📡 Has Static", int(df_filtered['has_static'].sum()))
+            
+            # Show ships with REAL dimensions vs estimated
+            ships_real_dims = len(df_filtered[
+                (df_filtered['dimension_a'] > 0) | 
+                (df_filtered['dimension_b'] > 0)
+            ])
+            ships_estimated = len(df_filtered) - ships_real_dims
+            cols[3].metric("📐 Real Dims", ships_real_dims)
+            cols[4].metric("📏 Estimated", ships_estimated, help="Yellow outline = estimated size")
+            
+            if 'legal_overall' in df_filtered.columns:
+                severe = len(df_filtered[df_filtered['legal_overall'] == 2])
+                warning = len(df_filtered[df_filtered['legal_overall'] == 1])
+                cols[5].metric("🔴 Severe", severe)
+                cols[6].metric("🟡 Warning", warning)
         
-        if 'has_static' in df_filtered.columns:
-            cols[2].metric("📡 Has Static", int(df_filtered['has_static'].sum()))
-        
-        # Show ships with REAL dimensions vs estimated
-        ships_real_dims = len(df_filtered[
-            (df_filtered['dimension_a'] > 0) | 
-            (df_filtered['dimension_b'] > 0)
-        ])
-        ships_estimated = len(df_filtered) - ships_real_dims
-        cols[3].metric("📐 Real Dims", ships_real_dims)
-        cols[4].metric("📏 Estimated", ships_estimated, help="Yellow outline = estimated size")
-        
-        if 'legal_overall' in df_filtered.columns:
-            severe = len(df_filtered[df_filtered['legal_overall'] == 2])
-            warning = len(df_filtered[df_filtered['legal_overall'] == 1])
-            cols[5].metric("🔴 Severe", severe)
-            cols[6].metric("🟡 Warning", warning)
-    
-    # Create map
+        # Create map
         with map_placeholder:
-        # Determine map center - use selected vessel if available
-        if st.session_state.selected_vessel is not None:
+            # Determine map center - use selected vessel if available
+            if st.session_state.selected_vessel is not None:
             selected = df_filtered[df_filtered['mmsi'] == st.session_state.selected_vessel]
             if not selected.empty:
                 center_lat = float(selected.iloc[0]['latitude'])
@@ -753,29 +753,29 @@ def display_data(df):
                 center_lat = 1.27
                 center_lon = 103.85
                 zoom_level = 11
-        else:
+            else:
             # Default view - all Singapore
             center_lat = 1.27
             center_lon = 103.85
             zoom_level = 11
         
-        view_state = pdk.ViewState(
+            view_state = pdk.ViewState(
             latitude=center_lat,
             longitude=center_lon,
             zoom=zoom_level,
             pitch=0,
-        )
+            )
         
-        # Add estimated flag for tooltip only (no visual difference now)
-        df_filtered['is_estimated'] = (df_filtered['dimension_a'] == 0) & (df_filtered['dimension_b'] == 0)
-        df_filtered['is_estimated'] = df_filtered['is_estimated'].apply(
+            # Add estimated flag for tooltip only (no visual difference now)
+            df_filtered['is_estimated'] = (df_filtered['dimension_a'] == 0) & (df_filtered['dimension_b'] == 0)
+            df_filtered['is_estimated'] = df_filtered['is_estimated'].apply(
             lambda x: '⚠️ Estimated size' if x else 'Real dimensions'
-        )
+            )
         
-        layers = []
+            layers = []
         
-        # Add maritime zone layers if enabled (wrapped in try-except)
-        try:
+            # Add maritime zone layers if enabled (wrapped in try-except)
+            try:
             if show_anchorages and anchorages_df is not None and len(anchorages_df) > 0:
                 # Group coordinates by anchorage name to create polygons
                 anchorage_polygons = []
@@ -802,10 +802,10 @@ def display_data(df):
                         auto_highlight=True,
                     )
                     layers.append(anchorage_layer)
-        except Exception as e:
+            except Exception as e:
             st.warning(f"Could not display anchorages: {e}")
         
-        try:
+            try:
             if show_channels and channels_df is not None and len(channels_df) > 0:
                 # Group coordinates by channel name
                 channel_polygons = []
@@ -832,10 +832,10 @@ def display_data(df):
                         auto_highlight=True,
                     )
                     layers.append(channel_layer)
-        except Exception as e:
+            except Exception as e:
             st.warning(f"Could not display channels: {e}")
         
-        try:
+            try:
             if show_fairways and fairways_df is not None and len(fairways_df) > 0:
                 # Group coordinates by fairway name
                 fairway_polygons = []
@@ -862,11 +862,11 @@ def display_data(df):
                         auto_highlight=True,
                     )
                     layers.append(fairway_layer)
-        except Exception as e:
+            except Exception as e:
             st.warning(f"Could not display fairways: {e}")
         
-        # Single polygon layer for all vessels - no borders
-        if len(df_filtered) > 0:
+            # Single polygon layer for all vessels - no borders
+            if len(df_filtered) > 0:
             polygon_layer = pdk.Layer(
                 'PolygonLayer',
                 data=df_filtered,
@@ -881,7 +881,7 @@ def display_data(df):
             )
             layers.append(polygon_layer)
         
-        deck = pdk.Deck(
+            deck = pdk.Deck(
             map_style='',
             initial_view_state=view_state,
             layers=layers,
@@ -889,24 +889,24 @@ def display_data(df):
                 'html': '<b>{name}</b><br/>Type: {type_name}<br/>Status: {nav_status_name}<br/>Length: {length}m × Width: {width}m<br/>{is_estimated}<br/>IMO: {imo}<br/>Speed: {speed} kts<br/>Legal Overall: {legal_overall}',
                 'style': {'backgroundColor': 'steelblue', 'color': 'white'}
             }
-        )
+            )
         
-        st.pydeck_chart(deck)
+            st.pydeck_chart(deck)
     
-    # Show table
-        with table_placeholder:
-        st.subheader("📋 S&P Compliance Screening Results")
+        # Show table
+            with table_placeholder:
+            st.subheader("📋 S&P Compliance Screening Results")
         
-        available_cols = list(df_filtered.columns)
-        display_cols = []
+            available_cols = list(df_filtered.columns)
+            display_cols = []
         
-        for col in ['name', 'type_name', 'nav_status_name', 'speed', 'legal_overall',
+            for col in ['name', 'type_name', 'nav_status_name', 'speed', 'legal_overall',
                     'ship_un_sanction', 'ship_ofac_sanction']:
             if col in available_cols:
                 display_cols.append(col)
         
-        # Format S&P values
-        def format_sp_value(val):
+            # Format S&P values
+            def format_sp_value(val):
             if pd.isna(val):
                 return '-'
             elif val == 2:
@@ -916,23 +916,23 @@ def display_data(df):
             else:
                 return '✅'
         
-        # Create header row
-        header_cols = st.columns([2, 1.5, 2, 0.8, 1, 0.8, 0.8, 0.6])
-        header_cols[0].markdown("**Name**")
-        header_cols[1].markdown("**Type**")
-        header_cols[2].markdown("**Status**")
-        header_cols[3].markdown("**Speed**")
-        header_cols[4].markdown("**Legal**")
-        header_cols[5].markdown("**UN**")
-        header_cols[6].markdown("**OFAC**")
-        header_cols[7].markdown("**View**")
+            # Create header row
+            header_cols = st.columns([2, 1.5, 2, 0.8, 1, 0.8, 0.8, 0.6])
+            header_cols[0].markdown("**Name**")
+            header_cols[1].markdown("**Type**")
+            header_cols[2].markdown("**Status**")
+            header_cols[3].markdown("**Speed**")
+            header_cols[4].markdown("**Legal**")
+            header_cols[5].markdown("**UN**")
+            header_cols[6].markdown("**OFAC**")
+            header_cols[7].markdown("**View**")
         
-        st.markdown("---")
+            st.markdown("---")
         
-        # Create scrollable container for rows
-        container = st.container(height=500)
+            # Create scrollable container for rows
+            container = st.container(height=500)
         
-        with container:
+            with container:
             for idx, row in df_filtered.iterrows():
                 cols = st.columns([2, 1.5, 2, 0.8, 1, 0.8, 0.8, 0.6])
                 
@@ -948,10 +948,10 @@ def display_data(df):
                     st.session_state.selected_vessel = row['mmsi']
                     st.rerun()
         
-        st.markdown("---")
+            st.markdown("---")
         
-        # Show currently centered vessel info
-        if st.session_state.selected_vessel is not None:
+            # Show currently centered vessel info
+            if st.session_state.selected_vessel is not None:
             selected = df_filtered[df_filtered['mmsi'] == st.session_state.selected_vessel]
             if not selected.empty:
                 col1, col2 = st.columns([3, 1])
@@ -970,9 +970,9 @@ def display_data(df):
                         st.session_state.selected_vessel = None
                         st.rerun()
     
-        save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
+            save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
         
-        if st.session_state.last_collection:
+            if st.session_state.last_collection:
             st.success(f"✅ Last updated: {datetime.fromtimestamp(st.session_state.last_collection).strftime('%Y-%m-%d %H:%M:%S')}")
     
     except Exception as e:
