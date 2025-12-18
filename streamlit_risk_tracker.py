@@ -26,41 +26,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# Load maritime zones data (Anchorages, Channels, Fairways)
-@st.cache_data
-def load_maritime_zones():
-    """Load anchorages, channels, and fairways from Excel file"""
-    try:
-        # Try multiple possible locations
-        possible_paths = [
-            '/mnt/user-data/uploads/Anchorages__Channels__Fairways_Details.xlsx',
-            'Anchorages__Channels__Fairways_Details.xlsx',
-            '/home/claude/Anchorages__Channels__Fairways_Details.xlsx'
-        ]
-        
-        zones_file = None
-        for path in possible_paths:
-            if os.path.exists(path):
-                zones_file = path
-                break
-        
-        if zones_file is None:
-            # File not found - return None silently
-            return None, None, None
-        
-        # Read all three sheets
-        anchorages_df = pd.read_excel(zones_file, sheet_name='Anchorages')
-        channels_df = pd.read_excel(zones_file, sheet_name='Channels')
-        fairways_df = pd.read_excel(zones_file, sheet_name='Fairways')
-        
-        return anchorages_df, channels_df, fairways_df
-    except Exception as e:
-        # Return None on any error - zones are optional
-        return None, None, None
-
-# Load zones
-anchorages_df, channels_df, fairways_df = load_maritime_zones()
-
 # File-based persistent storage
 STORAGE_FILE = "ship_data_cache.pkl"
 RISK_DATA_FILE = "risk_data_cache.pkl"
@@ -703,52 +668,52 @@ def display_data(df):
         if df.empty:
             st.warning("⚠️ No ships detected. Try increasing collection time.")
             return
-    
-    # Apply filters to dataframe
-    df_filtered = df.copy()
-    
-    # Vessel type filter
-    if 'type_name' in df_filtered.columns and 'All' not in vessel_types:
-        df_filtered = df_filtered[df_filtered['type_name'].isin(vessel_types)]
-    
-    # Navigational status filter
-    if 'nav_status_name' in df_filtered.columns and 'All' not in nav_status:
-        df_filtered = df_filtered[df_filtered['nav_status_name'].isin(nav_status)]
-    
-    if show_severe and 'legal_overall' in df_filtered.columns:
-        df_filtered = df_filtered[df_filtered['legal_overall'] == 2]
-    
-    if show_warning and 'legal_overall' in df_filtered.columns:
-        df_filtered = df_filtered[df_filtered['legal_overall'] >= 1]
-    
-    if show_sanctioned and 'ship_un_sanction' in df_filtered.columns:
-        df_filtered = df_filtered[(df_filtered['ship_un_sanction'] == 2) | (df_filtered['ship_ofac_sanction'] == 2)]
-    
-    if df_filtered.empty:
-        st.info("ℹ️ No ships match the selected filters.")
-        return
-    
-    # Debug info - show sample data
-    with st.expander("🔍 Debug Info - Click to expand"):
-        st.write(f"Total ships in filtered data: {len(df_filtered)}")
-        st.write(f"Ships with dimension_a > 0: {len(df_filtered[df_filtered['dimension_a'] > 0])}")
-        st.write(f"Ships with dimension_b > 0: {len(df_filtered[df_filtered['dimension_b'] > 0])}")
         
-        # Show sample ship data
-        if len(df_filtered) > 0:
-            sample = df_filtered.iloc[0]
-            st.write("Sample ship data:")
-            st.json({
-                'name': sample['name'],
-                'dimension_a': float(sample['dimension_a']),
-                'dimension_b': float(sample['dimension_b']),
-                'dimension_c': float(sample['dimension_c']),
-                'dimension_d': float(sample['dimension_d']),
-                'length': float(sample['length']),
-                'width': float(sample['width']),
-                'has_polygon': len(sample.get('vessel_polygon', [])) > 0,
-                'polygon_points': len(sample.get('vessel_polygon', []))
-            })
+        # Apply filters to dataframe
+        df_filtered = df.copy()
+        
+        # Vessel type filter
+        if 'type_name' in df_filtered.columns and 'All' not in vessel_types:
+            df_filtered = df_filtered[df_filtered['type_name'].isin(vessel_types)]
+        
+        # Navigational status filter
+        if 'nav_status_name' in df_filtered.columns and 'All' not in nav_status:
+            df_filtered = df_filtered[df_filtered['nav_status_name'].isin(nav_status)]
+        
+        if show_severe and 'legal_overall' in df_filtered.columns:
+            df_filtered = df_filtered[df_filtered['legal_overall'] == 2]
+        
+        if show_warning and 'legal_overall' in df_filtered.columns:
+            df_filtered = df_filtered[df_filtered['legal_overall'] >= 1]
+        
+        if show_sanctioned and 'ship_un_sanction' in df_filtered.columns:
+            df_filtered = df_filtered[(df_filtered['ship_un_sanction'] == 2) | (df_filtered['ship_ofac_sanction'] == 2)]
+        
+        if df_filtered.empty:
+            st.info("ℹ️ No ships match the selected filters.")
+            return
+        
+        # Debug info - show sample data
+        with st.expander("🔍 Debug Info - Click to expand"):
+            st.write(f"Total ships in filtered data: {len(df_filtered)}")
+            st.write(f"Ships with dimension_a > 0: {len(df_filtered[df_filtered['dimension_a'] > 0])}")
+            st.write(f"Ships with dimension_b > 0: {len(df_filtered[df_filtered['dimension_b'] > 0])}")
+            
+            # Show sample ship data
+            if len(df_filtered) > 0:
+                sample = df_filtered.iloc[0]
+                st.write("Sample ship data:")
+                st.json({
+                    'name': sample['name'],
+                    'dimension_a': float(sample['dimension_a']),
+                    'dimension_b': float(sample['dimension_b']),
+                    'dimension_c': float(sample['dimension_c']),
+                    'dimension_d': float(sample['dimension_d']),
+                    'length': float(sample['length']),
+                    'width': float(sample['width']),
+                    'has_polygon': len(sample.get('vessel_polygon', [])) > 0,
+                    'polygon_points': len(sample.get('vessel_polygon', []))
+                })
     
     # Display stats
     with stats_placeholder:
