@@ -887,8 +887,9 @@ def update_display():
             pitch=0,
         )
         
+        # Use default open street map tiles (light theme, no token needed)
         deck = pdk.Deck(
-            map_style='mapbox://styles/mapbox/dark-v10',
+            map_style='',  # Empty = use default open tiles
             initial_view_state=view_state,
             layers=layers,
             tooltip={
@@ -918,12 +919,15 @@ def update_display():
             st.rerun()
     
     with table_placeholder:
-        # Create scrollable container
-        container = st.container()
+        # Sort by legal_overall (most severe first) then by speed
+        display_df = df.sort_values(['legal_overall', 'speed'], ascending=[False, False]).copy()
         
-        with container:
+        # Create a scrollable container with fixed height
+        table_container = st.container(height=500)
+        
+        with table_container:
             # Header row
-            header_cols = st.columns([2.5, 1.5, 1.5, 1, 0.7, 0.7, 0.7, 0.7])
+            header_cols = st.columns([3, 2, 2.5, 1.2, 0.8, 0.8, 0.8, 1])
             header_cols[0].markdown("**Name**")
             header_cols[1].markdown("**Type**")
             header_cols[2].markdown("**Nav Status**")
@@ -933,29 +937,22 @@ def update_display():
             header_cols[6].markdown("**OFAC**")
             header_cols[7].markdown("**View**")
             
-            st.markdown("---")
+            st.divider()
             
-            # Sort by legal_overall (most severe first) then by speed
-            display_df = df.sort_values(['legal_overall', 'speed'], ascending=[False, False]).head(100)
-            
-            # Create scrollable area with max height
-            scroll_container = st.container()
-            
-            with scroll_container:
-                for idx, row in display_df.iterrows():
-                    row_cols = st.columns([2.5, 1.5, 1.5, 1, 0.7, 0.7, 0.7, 0.7])
-                    
-                    row_cols[0].write(row['name'][:25] if len(row['name']) > 25 else row['name'])
-                    row_cols[1].write(row['type_name'])
-                    row_cols[2].write(row['nav_status_name'][:15] if len(row['nav_status_name']) > 15 else row['nav_status_name'])
-                    row_cols[3].write(f"{row['speed']:.1f}")
-                    row_cols[4].write(format_compliance_value(row['legal_overall']))
-                    row_cols[5].write(format_compliance_value(row['un_sanction']))
-                    row_cols[6].write(format_compliance_value(row['ofac_sanction']))
-                    
-                    if row_cols[7].button("🗺️", key=f"view_{row['mmsi']}"):
-                        st.session_state.selected_vessel = row['mmsi']
-                        st.rerun()
+            for idx, row in display_df.iterrows():
+                cols = st.columns([3, 2, 2.5, 1.2, 0.8, 0.8, 0.8, 1])
+                
+                cols[0].write(row['name'])
+                cols[1].write(row['type_name'])
+                cols[2].write(row['nav_status_name'])
+                cols[3].write(f"{row['speed']:.1f} kts")
+                cols[4].write(format_compliance_value(row['legal_overall']))
+                cols[5].write(format_compliance_value(row['un_sanction']))
+                cols[6].write(format_compliance_value(row['ofac_sanction']))
+                
+                if cols[7].button("🗺️", key=f"view_{row['mmsi']}"):
+                    st.session_state.selected_vessel = row['mmsi']
+                    st.rerun()
     
     # Save cache
     save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
