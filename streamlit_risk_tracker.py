@@ -887,9 +887,9 @@ def update_display():
             pitch=0,
         )
         
-        # Use CartoDB free map tiles (no API key required)
+        # Use default open street map tiles (light theme, no token needed)
         deck = pdk.Deck(
-            map_style='https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+            map_style='',  # Empty = use default open tiles
             initial_view_state=view_state,
             layers=layers,
             tooltip={
@@ -922,66 +922,37 @@ def update_display():
         # Sort by legal_overall (most severe first) then by speed
         display_df = df.sort_values(['legal_overall', 'speed'], ascending=[False, False]).copy()
         
-        # Format the display dataframe
-        display_df['Legal'] = display_df['legal_overall'].apply(format_compliance_value)
-        display_df['UN'] = display_df['un_sanction'].apply(format_compliance_value)
-        display_df['OFAC'] = display_df['ofac_sanction'].apply(format_compliance_value)
-        display_df['Speed (kts)'] = display_df['speed'].round(1)
+        # Create a scrollable container with fixed height
+        table_container = st.container(height=500)
         
-        # Rename columns for display
-        display_df = display_df.rename(columns={
-            'name': 'Name',
-            'type_name': 'Type',
-            'nav_status_name': 'Nav Status',
-            'destination': 'Destination'
-        })
-        
-        # Select columns for display table
-        table_cols = ['Name', 'Type', 'Nav Status', 'Speed (kts)', 'Legal', 'UN', 'OFAC', 'Destination']
-        table_df = display_df[table_cols]
-        
-        # Display the dataframe with full content visible
-        st.dataframe(
-            table_df,
-            use_container_width=True,
-            height=500,
-            column_config={
-                "Name": st.column_config.TextColumn("Name", width="medium"),
-                "Type": st.column_config.TextColumn("Type", width="small"),
-                "Nav Status": st.column_config.TextColumn("Nav Status", width="medium"),
-                "Speed (kts)": st.column_config.NumberColumn("Speed (kts)", width="small", format="%.1f"),
-                "Legal": st.column_config.TextColumn("Legal", width="small"),
-                "UN": st.column_config.TextColumn("UN", width="small"),
-                "OFAC": st.column_config.TextColumn("OFAC", width="small"),
-                "Destination": st.column_config.TextColumn("Destination", width="medium"),
-            },
-            hide_index=True
-        )
-        
-        # Vessel selection section
-        st.markdown("##### 🔍 Select Vessel to View on Map")
-        vessel_names = display_df['Name'].tolist()
-        vessel_mmsis = display_df['mmsi'].tolist()
-        
-        # Create selection options
-        if vessel_names:
-            col1, col2 = st.columns([4, 1])
+        with table_container:
+            # Header row
+            header_cols = st.columns([3, 2, 2.5, 1.2, 0.8, 0.8, 0.8, 1])
+            header_cols[0].markdown("**Name**")
+            header_cols[1].markdown("**Type**")
+            header_cols[2].markdown("**Nav Status**")
+            header_cols[3].markdown("**Speed**")
+            header_cols[4].markdown("**Legal**")
+            header_cols[5].markdown("**UN**")
+            header_cols[6].markdown("**OFAC**")
+            header_cols[7].markdown("**View**")
             
-            # Create a mapping for selection
-            vessel_options = {f"{name} (MMSI: {mmsi})": mmsi for name, mmsi in zip(vessel_names, vessel_mmsis)}
+            st.divider()
             
-            with col1:
-                selected_option = st.selectbox(
-                    "Select vessel:",
-                    options=[""] + list(vessel_options.keys()),
-                    label_visibility="collapsed"
-                )
-            
-            with col2:
-                if st.button("🗺️ View on Map", disabled=not selected_option):
-                    if selected_option:
-                        st.session_state.selected_vessel = vessel_options[selected_option]
-                        st.rerun()
+            for idx, row in display_df.iterrows():
+                cols = st.columns([3, 2, 2.5, 1.2, 0.8, 0.8, 0.8, 1])
+                
+                cols[0].write(row['name'])
+                cols[1].write(row['type_name'])
+                cols[2].write(row['nav_status_name'])
+                cols[3].write(f"{row['speed']:.1f} kts")
+                cols[4].write(format_compliance_value(row['legal_overall']))
+                cols[5].write(format_compliance_value(row['un_sanction']))
+                cols[6].write(format_compliance_value(row['ofac_sanction']))
+                
+                if cols[7].button("🗺️", key=f"view_{row['mmsi']}"):
+                    st.session_state.selected_vessel = row['mmsi']
+                    st.rerun()
     
     # Save cache
     save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
