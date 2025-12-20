@@ -34,6 +34,7 @@ SGT = timezone(timedelta(hours=8))
 STORAGE_FILE = "ship_data_cache.pkl"
 RISK_DATA_FILE = "risk_data_cache.pkl"
 MMSI_IMO_CACHE_FILE = "mmsi_imo_cache.pkl"
+VESSEL_POSITION_FILE = "vessel_positions_cache.pkl"
 
 # AIS vessel type codes
 VESSEL_TYPE_NAMES = {
@@ -159,11 +160,12 @@ def get_vessel_type_category(type_code: int) -> str:
         return "Other"
 
 
-def load_cache() -> Tuple[Dict, Dict, Dict]:
-    """Load cached ship, risk, and MMSI-to-IMO data from disk"""
+def load_cache() -> Tuple[Dict, Dict, Dict, Dict]:
+    """Load cached ship, risk, MMSI-to-IMO, and vessel position data from disk"""
     ship_cache = {}
     risk_cache = {}
     mmsi_imo_cache = {}
+    vessel_positions = {}
     
     if os.path.exists(STORAGE_FILE):
         try:
@@ -186,11 +188,18 @@ def load_cache() -> Tuple[Dict, Dict, Dict]:
         except Exception:
             pass
     
-    return ship_cache, risk_cache, mmsi_imo_cache
+    if os.path.exists(VESSEL_POSITION_FILE):
+        try:
+            with open(VESSEL_POSITION_FILE, 'rb') as f:
+                vessel_positions = pickle.load(f)
+        except Exception:
+            pass
+    
+    return ship_cache, risk_cache, mmsi_imo_cache, vessel_positions
 
 
-def save_cache(ship_cache: Dict, risk_cache: Dict, mmsi_imo_cache: Dict = None):
-    """Save ship, risk, and MMSI-to-IMO data to disk"""
+def save_cache(ship_cache: Dict, risk_cache: Dict, mmsi_imo_cache: Dict = None, vessel_positions: Dict = None):
+    """Save ship, risk, MMSI-to-IMO, and vessel position data to disk"""
     try:
         with open(STORAGE_FILE, 'wb') as f:
             pickle.dump(ship_cache, f)
@@ -199,6 +208,9 @@ def save_cache(ship_cache: Dict, risk_cache: Dict, mmsi_imo_cache: Dict = None):
         if mmsi_imo_cache is not None:
             with open(MMSI_IMO_CACHE_FILE, 'wb') as f:
                 pickle.dump(mmsi_imo_cache, f)
+        if vessel_positions is not None:
+            with open(VESSEL_POSITION_FILE, 'wb') as f:
+                pickle.dump(vessel_positions, f)
     except Exception as e:
         st.warning(f"Could not save cache: {e}")
 
@@ -314,11 +326,13 @@ def create_vessel_polygon(lat: float, lon: float, heading: float,
 
 # Initialize session state for persistent storage
 if 'ship_static_cache' not in st.session_state:
-    ship_cache, risk_cache, mmsi_imo_cache = load_cache()
+    ship_cache, risk_cache, mmsi_imo_cache, vessel_positions = load_cache()
     st.session_state.ship_static_cache = ship_cache
     st.session_state.risk_data_cache = risk_cache
     st.session_state.mmsi_to_imo_cache = mmsi_imo_cache
+    st.session_state.vessel_positions = vessel_positions
     st.session_state.last_save = time.time()
+    st.session_state.last_data_update = vessel_positions.get('_last_update', None)
 
 if 'selected_vessel' not in st.session_state:
     st.session_state.selected_vessel = None
@@ -349,33 +363,23 @@ class SPShipsAPI:
             if response.status_code == 200:
                 data = response.json()
                 
-                # Based on actual API response structure:
-                # Response has: apsStatus, shipCount, apsShipDetail
-                # IMO is in apsShipDetail.ihslRorIMOShipNo (camelCase)
+                # Based on actual API response structure (case-sensitive!):
+                # Response has: APSStatus, shipCount, APSShipDetail
+                # IMO is in APSShipDetail.IHSLRorIMOShipNo
                 
+                # Try exact case first (as per actual API response)
+                if 'APSShipDetail' in data and data['APSShipDetail']:
+                    detail = data['APSShipDetail']
+                    imo = detail.get('IHSLRorIMOShipNo')
+                    if imo and str(imo) != '0' and str(imo) != '':
+                        return str(imo)
+                
+                # Fallback: try lowercase variant
                 if 'apsShipDetail' in data and data['apsShipDetail']:
                     detail = data['apsShipDetail']
-                    # The field is ihslRorIMOShipNo (camelCase with lowercase 'ihs')
-                    imo = detail.get('ihslRorIMOShipNo') or detail.get('lrno')
+                    imo = detail.get('ihslRorIMOShipNo') or detail.get('IHSLRorIMOShipNo')
                     if imo and str(imo) != '0' and str(imo) != '':
                         return str(imo)
-                
-                # Also try alternate capitalizations just in case
-                if 'ApsShipDetail' in data and data['ApsShipDetail']:
-                    detail = data['ApsShipDetail']
-                    imo = detail.get('ihslRorIMOShipNo') or detail.get('IhslRorIMOShipNo') or detail.get('lrno')
-                    if imo and str(imo) != '0' and str(imo) != '':
-                        return str(imo)
-                
-                # Check ShipResult wrapper (older API versions)
-                if 'ShipResult' in data and data['ShipResult']:
-                    ship_data = data['ShipResult']
-                    if isinstance(ship_data, dict):
-                        if 'apsShipDetail' in ship_data:
-                            detail = ship_data['apsShipDetail']
-                            imo = detail.get('ihslRorIMOShipNo') or detail.get('lrno')
-                            if imo and str(imo) != '0' and str(imo) != '':
-                                return str(imo)
             
             return None
             
@@ -528,20 +532,56 @@ class SPMaritimeAPI:
 class AISTracker:
     """AIS data collection and vessel tracking"""
     
-    def __init__(self):
-        self.ships = defaultdict(lambda: {
-            'latest_position': None,
-            'static_data': None
-        })
+    def __init__(self, use_cached_positions: bool = True):
+        # Load cached positions if available
+        if use_cached_positions and 'vessel_positions' in st.session_state:
+            self.ships = defaultdict(lambda: {
+                'latest_position': None,
+                'static_data': None
+            })
+            # Restore from cache
+            cached = st.session_state.vessel_positions
+            for mmsi, data in cached.items():
+                if mmsi != '_last_update':  # Skip metadata
+                    self.ships[mmsi] = data
+        else:
+            self.ships = defaultdict(lambda: {
+                'latest_position': None,
+                'static_data': None
+            })
     
-    def get_ship_color(self, legal_overall: int = 0) -> List[int]:
-        """Return color based on legal overall compliance status"""
+    def get_ship_color(self, legal_overall: int = -1) -> List[int]:
+        """Return color based on legal overall compliance status
+        -1 = Unknown (gray)
+        0 = Clear (green)
+        1 = Warning (yellow)
+        2 = Severe (red)
+        """
         if legal_overall == 2:
             return [220, 53, 69, 200]  # Red - Severe
         elif legal_overall == 1:
             return [255, 193, 7, 200]  # Orange/Yellow - Warning
-        else:
+        elif legal_overall == 0:
             return [40, 167, 69, 200]  # Green - Clear
+        else:  # -1 or any other value = unknown
+            return [128, 128, 128, 200]  # Gray - Unknown/Not checked
+    
+    def save_positions_to_cache(self):
+        """Save current vessel positions to session state and disk"""
+        # Convert defaultdict to regular dict for pickling
+        positions_dict = dict(self.ships)
+        positions_dict['_last_update'] = datetime.now(SGT).isoformat()
+        
+        st.session_state.vessel_positions = positions_dict
+        st.session_state.last_data_update = positions_dict['_last_update']
+        
+        # Save to disk
+        save_cache(
+            st.session_state.ship_static_cache,
+            st.session_state.risk_data_cache,
+            st.session_state.get('mmsi_to_imo_cache', {}),
+            positions_dict
+        )
     
     async def collect_data(self, duration: int = 30, api_key: str = "", bounding_box: List = None):
         """Collect AIS data from AISStream.io"""
@@ -575,6 +615,10 @@ class AISTracker:
                         self.process_position(ais_message)
                     elif message_type == "ShipStaticData":
                         self.process_static(ais_message)
+            
+            # Save positions after collection completes
+            self.save_positions_to_cache()
+            
         except Exception as e:
             st.error(f"AIS connection error: {e}")
     
@@ -690,11 +734,12 @@ class AISTracker:
                 'destination': (static.get('destination') or 'Unknown').strip(),
                 'call_sign': static.get('call_sign', ''),
                 'has_static': bool(static.get('name')),
-                'legal_overall': 0,
-                'un_sanction': 0,
-                'ofac_sanction': 0,
-                'dark_activity': 0,
-                'color': self.get_ship_color(0)
+                'legal_overall': -1,  # -1 = not checked yet
+                'un_sanction': -1,
+                'ofac_sanction': -1,
+                'dark_activity': -1,
+                'compliance_checked': False,  # Track if checked
+                'color': self.get_ship_color(-1)  # Default unknown color
             })
         
         df = pd.DataFrame(data)
@@ -729,11 +774,17 @@ class AISTracker:
                 imo = str(row['imo'])
                 if imo in compliance_data and compliance_data[imo]:
                     comp = compliance_data[imo]
-                    df.at[idx, 'legal_overall'] = comp.get('legal_overall', 0)
-                    df.at[idx, 'un_sanction'] = comp.get('ship_un_sanction', 0)
-                    df.at[idx, 'ofac_sanction'] = comp.get('ship_ofac_sanction', 0)
-                    df.at[idx, 'dark_activity'] = comp.get('dark_activity', 0)
-                    df.at[idx, 'color'] = self.get_ship_color(comp.get('legal_overall', 0))
+                    legal_overall = comp.get('legal_overall', 0)
+                    # Convert to int if needed
+                    if isinstance(legal_overall, str):
+                        legal_overall = int(legal_overall) if legal_overall.isdigit() else 0
+                    
+                    df.at[idx, 'legal_overall'] = legal_overall
+                    df.at[idx, 'un_sanction'] = int(comp.get('ship_un_sanction', 0) or 0)
+                    df.at[idx, 'ofac_sanction'] = int(comp.get('ship_ofac_sanction', 0) or 0)
+                    df.at[idx, 'dark_activity'] = int(comp.get('dark_activity', 0) or 0)
+                    df.at[idx, 'compliance_checked'] = True
+                    df.at[idx, 'color'] = self.get_ship_color(legal_overall)
         
         return df
 
@@ -755,7 +806,16 @@ def create_vessel_layer(df: pd.DataFrame) -> pdk.Layer:
         )
         
         # Build tooltip text for vessel
-        legal_emoji = '🔴' if row['legal_overall'] == 2 else ('🟡' if row['legal_overall'] == 1 else '✅')
+        legal_val = row['legal_overall']
+        if legal_val == 2:
+            legal_emoji = '🔴'
+        elif legal_val == 1:
+            legal_emoji = '🟡'
+        elif legal_val == 0:
+            legal_emoji = '✅'
+        else:
+            legal_emoji = '❓'  # Unknown/not checked
+        
         tooltip_text = f"<b>{row['name']}</b><br/>IMO: {row['imo']}<br/>MMSI: {row['mmsi']}<br/>Type: {row['type_name']}<br/>Status: {row['nav_status_name']}<br/>Speed: {row['speed']:.1f} kts<br/>Legal: {legal_emoji}<br/>Destination: {row['destination']}"
         
         vessel_polygons.append({
@@ -942,19 +1002,28 @@ show_static_only = st.sidebar.checkbox("Ships with static data only", value=Fals
 st.sidebar.header("💾 Cache Statistics")
 mmsi_imo_count = len(st.session_state.get('mmsi_to_imo_cache', {}))
 mmsi_imo_found = len([v for v in st.session_state.get('mmsi_to_imo_cache', {}).values() if v])
+vessel_count = len([k for k in st.session_state.get('vessel_positions', {}).keys() if k != '_last_update'])
+last_update = st.session_state.get('last_data_update', 'Never')
+
 st.sidebar.info(f"""
-**Static Data Cache:** {len(st.session_state.ship_static_cache)} vessels
+**Cached Vessels:** {vessel_count}
 
-**Compliance Cache:** {len(st.session_state.risk_data_cache)} vessels
+**Static Data:** {len(st.session_state.ship_static_cache)} vessels
 
-**MMSI→IMO Cache:** {mmsi_imo_found}/{mmsi_imo_count} found
+**Compliance:** {len(st.session_state.risk_data_cache)} vessels
+
+**MMSI→IMO:** {mmsi_imo_found}/{mmsi_imo_count} found
+
+**Last Update:** {last_update if last_update else 'Never'}
 """)
 
 if st.sidebar.button("🗑️ Clear All Cache"):
     st.session_state.ship_static_cache = {}
     st.session_state.risk_data_cache = {}
     st.session_state.mmsi_to_imo_cache = {}
-    save_cache({}, {}, {})
+    st.session_state.vessel_positions = {}
+    st.session_state.last_data_update = None
+    save_cache({}, {}, {}, {})
     st.sidebar.success("Cache cleared!")
     st.rerun()
 
@@ -1010,46 +1079,52 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
     return filtered_df
 
 
-def format_compliance_value(val: int) -> str:
-    """Format compliance values with emoji"""
-    if val == 2:
-        return "🔴"
-    elif val == 1:
-        return "🟡"
+def format_compliance_value(val) -> str:
+    """Format compliance values with emoji
+    -1 or None = Not checked (unknown)
+    0 = Clear
+    1 = Warning
+    2 = Severe
+    """
+    if val is None or val == -1 or val == '-1':
+        return "❓"  # Unknown/not checked
+    elif val == 2 or val == '2':
+        return "🔴"  # Severe
+    elif val == 1 or val == '1':
+        return "🟡"  # Warning
+    elif val == 0 or val == '0':
+        return "✅"  # Clear
     else:
-        return "✅"
+        return "❓"  # Default to unknown
 
 
-def update_display():
-    """Main function to collect data and update display"""
+def display_cached_data():
+    """Display cached vessel data without collecting new AIS data"""
     
-    # Initialize APIs
+    # Check if we have cached data
+    if 'vessel_positions' not in st.session_state or not st.session_state.vessel_positions:
+        st.info("ℹ️ No cached vessel data. Click 'Refresh Now' to collect AIS data.")
+        return
+    
+    cached_positions = st.session_state.vessel_positions
+    last_update = cached_positions.get('_last_update', 'Unknown')
+    
+    # Initialize APIs for compliance lookup (uses cached compliance data)
     sp_api = None
     ships_api = None
     if enable_compliance and sp_username and sp_password:
         sp_api = SPMaritimeAPI(sp_username, sp_password)
-        ships_api = SPShipsAPI(sp_username, sp_password)  # Same credentials for Ships API
+        ships_api = SPShipsAPI(sp_username, sp_password)
     
-    # Collect AIS data
-    with status_placeholder:
-        with st.spinner(f'🔄 Collecting AIS data for {duration} seconds ({selected_coverage})...'):
-            tracker = AISTracker()
-            if ais_api_key:
-                asyncio.run(tracker.collect_data(duration, ais_api_key, coverage_bbox))
-            else:
-                st.warning("⚠️ No AISStream API key provided. Please add it to secrets.")
-                return
-            
-            df = tracker.get_dataframe_with_compliance(sp_api, ships_api)
+    # Create tracker with cached positions
+    tracker = AISTracker(use_cached_positions=True)
     
-    status_placeholder.empty()
+    # Get dataframe (will use cached compliance data too)
+    df = tracker.get_dataframe_with_compliance(sp_api, ships_api)
     
     if df.empty:
-        st.warning("⚠️ No ships detected. Try increasing collection time or check API key.")
+        st.info("ℹ️ No cached vessel data. Click 'Refresh Now' to collect AIS data.")
         return
-    
-    # Store full dataframe before filtering
-    full_df = df.copy()
     
     # Apply filters
     df = apply_filters(df)
@@ -1058,21 +1133,30 @@ def update_display():
         st.info("ℹ️ No ships match the selected filters.")
         return
     
+    # Display the data (same as update_display)
+    display_vessel_data(df, last_update, is_cached=True)
+
+
+def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = False):
+    """Common function to display vessel data on map and table"""
+    
     # Display statistics
     with stats_placeholder:
-        cols = st.columns(7)
+        cols = st.columns(8)
         cols[0].metric("🚢 Total Ships", len(df))
         cols[1].metric("⚡ Moving", len(df[df['speed'] > 1]))
         cols[2].metric("📡 Has Static", int(df['has_static'].sum()))
-        cols[3].metric("📐 Real Dims", int(df['has_dimensions'].sum()))
         
         severe_count = len(df[df['legal_overall'] == 2])
         warning_count = len(df[df['legal_overall'] == 1])
         clear_count = len(df[df['legal_overall'] == 0])
+        unknown_count = len(df[df['legal_overall'] < 0])  # -1 = not checked
         
-        cols[4].metric("🔴 Severe", severe_count)
-        cols[5].metric("🟡 Warning", warning_count)
-        cols[6].metric("✅ Clear", clear_count)
+        cols[3].metric("🔴 Severe", severe_count)
+        cols[4].metric("🟡 Warning", warning_count)
+        cols[5].metric("✅ Clear", clear_count)
+        cols[6].metric("❓ Unknown", unknown_count)
+        cols[7].metric("📐 Real Dims", int(df['has_dimensions'].sum()))
     
     # Determine map view
     if st.session_state.selected_vessel:
@@ -1097,7 +1181,7 @@ def update_display():
     if show_anchorages and maritime_zones['Anchorages']:
         anchorage_layer = create_zone_layer(
             maritime_zones['Anchorages'], 
-            [0, 255, 255, 50],  # Cyan with 80% transparency
+            [0, 255, 255, 50],
             "anchorages"
         )
         if anchorage_layer:
@@ -1106,7 +1190,7 @@ def update_display():
     if show_channels and maritime_zones['Channels']:
         channel_layer = create_zone_layer(
             maritime_zones['Channels'], 
-            [255, 255, 0, 50],  # Yellow with 80% transparency
+            [255, 255, 0, 50],
             "channels"
         )
         if channel_layer:
@@ -1115,7 +1199,7 @@ def update_display():
     if show_fairways and maritime_zones['Fairways']:
         fairway_layer = create_zone_layer(
             maritime_zones['Fairways'], 
-            [255, 165, 0, 50],  # Orange with 80% transparency
+            [255, 165, 0, 50],
             "fairways"
         )
         if fairway_layer:
@@ -1135,9 +1219,8 @@ def update_display():
             pitch=0,
         )
         
-        # Use default open street map tiles (light theme, no token needed)
         deck = pdk.Deck(
-            map_style='',  # Empty = use default open tiles
+            map_style='',
             initial_view_state=view_state,
             layers=layers,
             tooltip={
@@ -1194,18 +1277,71 @@ def update_display():
                 st.session_state.selected_vessel = selected_mmsi
                 st.rerun()
     
-    # Save cache
-    save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache, st.session_state.get('mmsi_to_imo_cache', {}))
+    # Display timestamp
+    cache_indicator = " 📦 (cached)" if is_cached else ""
+    if isinstance(last_update, str) and last_update != 'Unknown':
+        st.success(f"✅ Last updated: {last_update} SGT{cache_indicator}")
+    else:
+        sgt_now = datetime.now(SGT)
+        st.success(f"✅ Last updated: {sgt_now.strftime('%Y-%m-%d %H:%M:%S')} SGT{cache_indicator}")
+
+
+def update_display():
+    """Main function to collect data and update display"""
     
-    # Display timestamp in Singapore time (GMT+8)
-    sgt_now = datetime.now(SGT)
-    st.success(f"✅ Last updated: {sgt_now.strftime('%Y-%m-%d %H:%M:%S')} SGT (GMT+8)")
+    # Initialize APIs
+    sp_api = None
+    ships_api = None
+    if enable_compliance and sp_username and sp_password:
+        sp_api = SPMaritimeAPI(sp_username, sp_password)
+        ships_api = SPShipsAPI(sp_username, sp_password)  # Same credentials for Ships API
+    
+    # Collect AIS data
+    with status_placeholder:
+        with st.spinner(f'🔄 Collecting AIS data for {duration} seconds ({selected_coverage})...'):
+            tracker = AISTracker(use_cached_positions=True)  # Start with cached, then update
+            if ais_api_key:
+                asyncio.run(tracker.collect_data(duration, ais_api_key, coverage_bbox))
+            else:
+                st.warning("⚠️ No AISStream API key provided. Please add it to secrets.")
+                return
+            
+            df = tracker.get_dataframe_with_compliance(sp_api, ships_api)
+    
+    status_placeholder.empty()
+    
+    if df.empty:
+        st.warning("⚠️ No ships detected. Try increasing collection time or check API key.")
+        return
+    
+    # Apply filters
+    df = apply_filters(df)
+    
+    if df.empty:
+        st.info("ℹ️ No ships match the selected filters.")
+        return
+    
+    # Get last update time
+    last_update = st.session_state.get('last_data_update', datetime.now(SGT).strftime('%Y-%m-%d %H:%M:%S'))
+    
+    # Display the data
+    display_vessel_data(df, last_update, is_cached=False)
+    
+    # Save cache
+    save_cache(
+        st.session_state.ship_static_cache, 
+        st.session_state.risk_data_cache, 
+        st.session_state.get('mmsi_to_imo_cache', {}),
+        st.session_state.get('vessel_positions', {})
+    )
 
 
 # Control buttons
-col1, col2 = st.columns([1, 5])
+col1, col2, col3 = st.columns([1, 1, 4])
 if col1.button("🔄 Refresh Now", type="primary"):
     update_display()
+if col2.button("📦 View Cached"):
+    display_cached_data()
 
 # Auto-refresh option
 auto_refresh = st.sidebar.checkbox("Auto-refresh every 60s", value=False)
@@ -1214,10 +1350,20 @@ if auto_refresh:
     time.sleep(60)
     st.rerun()
 
-# Initial load button hint
+# Show cached data on page load if available
 if 'data_loaded' not in st.session_state:
-    st.info("👆 Click 'Refresh Now' to start collecting AIS data")
     st.session_state.data_loaded = False
+
+if not st.session_state.data_loaded:
+    # Check if we have cached data to display
+    if 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
+        cached_count = len([k for k in st.session_state.vessel_positions.keys() if k != '_last_update'])
+        if cached_count > 0:
+            st.info(f"📦 Found {cached_count} cached vessels. Click 'View Cached' to display, or 'Refresh Now' to get fresh data.")
+        else:
+            st.info("👆 Click 'Refresh Now' to start collecting AIS data")
+    else:
+        st.info("👆 Click 'Refresh Now' to start collecting AIS data")
 
 # Legend
 st.sidebar.markdown("---")
@@ -1226,14 +1372,15 @@ st.sidebar.markdown("""
 - 🔴 **Red**: Severe compliance issue
 - 🟡 **Yellow/Orange**: Warning
 - 🟢 **Green**: Clear
+- ⬜ **Gray**: Not checked (no IMO)
 """)
 
 st.sidebar.markdown("### 🚨 Compliance Indicators")
 st.sidebar.markdown("""
-- **Legal Overall**: 0=Clear, 1=Warning, 2=Severe
-- **UN**: UN Security Council sanctions
-- **OFAC**: US Treasury OFAC SDN list
-- **Dark**: Suspected dark activity
+- ✅ Clear (0)
+- 🟡 Warning (1)
+- 🔴 Severe (2)
+- ❓ Not checked
 """)
 
 st.sidebar.markdown("### 🗺️ Zone Colors")
