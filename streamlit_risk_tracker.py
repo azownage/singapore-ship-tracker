@@ -1107,37 +1107,35 @@ def update_display():
         display_df['dark_display'] = display_df['dark_activity'].apply(lambda x: '🌑' if x == 2 else ('⚠️' if x == 1 else '✅'))
         display_df['speed_fmt'] = display_df['speed'].apply(lambda x: f"{x:.1f}")
         
-        # Create table with View buttons
-        # Header row
-        header_cols = st.columns([0.5, 2, 1, 1.2, 1.5, 1.5, 0.8, 1.5, 0.6, 0.5, 0.5, 0.5, 0.5])
-        headers = ['View', 'Name', 'IMO', 'MMSI', 'Type', 'Nav Status', 'Speed', 'Destination', 'Static', 'Legal', 'UN', 'OFAC', 'Dark']
-        for col, header in zip(header_cols, headers):
-            col.markdown(f"**{header}**")
+        # Select and rename columns for display (MMSI after IMO)
+        table_df = display_df[['name', 'imo', 'mmsi', 'type_name', 'nav_status_name', 'speed_fmt', 'destination', 'has_static_display', 'legal_display', 'un_display', 'ofac_display', 'dark_display']].copy()
+        table_df.columns = ['Name', 'IMO', 'MMSI', 'Type', 'Nav Status', 'Speed', 'Destination', 'Static', 'Legal', 'UN', 'OFAC', 'Dark']
         
-        st.divider()
+        # Display the dataframe
+        st.dataframe(
+            table_df,
+            use_container_width=True,
+            height=500,
+            hide_index=True
+        )
         
-        # Data rows in scrollable container
-        table_container = st.container(height=450)
-        with table_container:
-            for _, row in display_df.iterrows():
-                cols = st.columns([0.5, 2, 1, 1.2, 1.5, 1.5, 0.8, 1.5, 0.6, 0.5, 0.5, 0.5, 0.5])
-                
-                if cols[0].button("🗺️", key=f"view_{row['mmsi']}"):
-                    st.session_state.selected_vessel = row['mmsi']
+        # Vessel selection for map view
+        st.markdown("##### 🔍 Select Vessel to View on Map")
+        vessel_options = {f"{row['name']} (IMO: {row['imo']}, MMSI: {row['mmsi']})": row['mmsi'] for _, row in display_df.iterrows()}
+        
+        col1, col2 = st.columns([4, 1])
+        with col1:
+            selected_option = st.selectbox(
+                "Select vessel:",
+                options=[""] + list(vessel_options.keys()),
+                label_visibility="collapsed"
+            )
+        
+        with col2:
+            if st.button("🗺️ View", disabled=not selected_option):
+                if selected_option:
+                    st.session_state.selected_vessel = vessel_options[selected_option]
                     st.rerun()
-                
-                cols[1].write(row['name'])
-                cols[2].write(row['imo'])
-                cols[3].write(str(row['mmsi']))
-                cols[4].write(row['type_name'])
-                cols[5].write(row['nav_status_name'])
-                cols[6].write(f"{row['speed']:.1f}")
-                cols[7].write(row['destination'])
-                cols[8].write(row['has_static_display'])
-                cols[9].write(row['legal_display'])
-                cols[10].write(row['un_display'])
-                cols[11].write(row['ofac_display'])
-                cols[12].write(row['dark_display'])
     
     # Save cache
     save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
