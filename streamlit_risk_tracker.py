@@ -377,17 +377,100 @@ if 'ship_static_cache' not in st.session_state:
 if 'selected_vessel' not in st.session_state:
     st.session_state.selected_vessel = None
 
+if 'show_details_imo' not in st.session_state:
+    st.session_state.show_details_imo = None
+    st.session_state.show_details_name = None
+
 if 'map_center' not in st.session_state:
     st.session_state.map_center = {"lat": 1.5, "lon": 104.0, "zoom": 8}
 
 
 class SPShipsAPI:
-    """S&P Ships API for MMSI to IMO lookup"""
+    """S&P Ships API for MMSI to IMO lookup and ship details"""
     
     def __init__(self, username: str, password: str):
         self.username = username
         self.password = password
         self.base_url = "https://shipsapi.maritime.spglobal.com/MaritimeWCF/APSShipService.svc/RESTFul"
+    
+    def get_ship_details_by_imo(self, imo: str) -> Optional[Dict]:
+        """Get full ship details including dark activity by IMO"""
+        try:
+            url = f"{self.base_url}/GetShipsByIHSLRorIMONumbersAll?imoNumbers={imo}"
+            
+            response = requests.get(
+                url,
+                auth=(self.username, self.password),
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Response structure: ShipResult[0].APSShipDetail
+                if 'ShipResult' in data and data['ShipResult']:
+                    ship_result = data['ShipResult'][0] if isinstance(data['ShipResult'], list) else data['ShipResult']
+                    if 'APSShipDetail' in ship_result:
+                        detail = ship_result['APSShipDetail']
+                        
+                        # Extract key fields
+                        result = {
+                            'imo': detail.get('IHSLRorIMOShipNo', ''),
+                            'ship_name': detail.get('ShipName', ''),
+                            'flag': detail.get('FlagName', ''),
+                            'ship_type': detail.get('ShiptypeLevel5', ''),
+                            'year_built': detail.get('YearOfBuild', ''),
+                            'gross_tonnage': detail.get('GrossTonnage', ''),
+                            'deadweight': detail.get('Deadweight', ''),
+                            'status': detail.get('ShipStatus', ''),
+                            'classification': detail.get('ClassificationSociety', ''),
+                            # Ownership
+                            'registered_owner': detail.get('RegisteredOwner', ''),
+                            'group_beneficial_owner': detail.get('GroupBeneficialOwner', ''),
+                            'operator': detail.get('Operator', ''),
+                            'ship_manager': detail.get('ShipManager', ''),
+                            'technical_manager': detail.get('TechnicalManager', ''),
+                            'doc_company': detail.get('DOCCompany', ''),
+                            # Compliance status
+                            'legal_overall': int(detail.get('LegalOverall', 0) or 0),
+                            'dark_activity_indicator': int(detail.get('ShipDarkActivityIndicator', 0) or 0),
+                            'flag_disputed': int(detail.get('ShipFlagDisputed', 0) or 0),
+                            'flag_sanctioned': int(detail.get('ShipFlagSanctionedCountry', 0) or 0),
+                            # Dark Activity Confirmed events
+                            'dark_activity_events': []
+                        }
+                        
+                        # Parse dark activity confirmed events
+                        if 'DarkActivityConfirmed' in detail and detail['DarkActivityConfirmed']:
+                            for event in detail['DarkActivityConfirmed']:
+                                dark_event = {
+                                    'dark_time': event.get('Dark_Time', ''),
+                                    'next_seen': event.get('NextSeen', ''),
+                                    'dark_hours': event.get('Dark_Hours', ''),
+                                    'dark_activity_type': event.get('Dark_Activity', ''),
+                                    'dark_status': event.get('Dark_Status', ''),
+                                    'area_name': event.get('Area_Name', ''),
+                                    'dark_lat': float(event.get('Dark_Latitude', 0) or 0),
+                                    'dark_lon': float(event.get('Dark_Longitude', 0) or 0),
+                                    'dark_speed': event.get('Dark_Speed', ''),
+                                    'dark_heading': event.get('Dark_Heading', ''),
+                                    'dark_draught': event.get('Dark_Draught', ''),
+                                    'next_lat': float(event.get('NextSeen_Latitude', 0) or 0),
+                                    'next_lon': float(event.get('NextSeen_Longitude', 0) or 0),
+                                    'next_speed': event.get('NextSeen_Speed', ''),
+                                    'next_draught': event.get('NextSeen_Draught', ''),
+                                    'dark_destination': event.get('Dark_Reported_Destination', ''),
+                                    'next_destination': event.get('NextSeen_Reported_Destination', ''),
+                                }
+                                result['dark_activity_events'].append(dark_event)
+                        
+                        return result
+            
+            return None
+            
+        except Exception as e:
+            st.error(f"Error fetching ship details: {e}")
+            return None
     
     def get_imo_by_mmsi(self, mmsi: str) -> Optional[str]:
         """Look up IMO number from MMSI using Ships API"""
@@ -932,6 +1015,161 @@ def create_zone_layer(zones: List[Dict], color: List[int], layer_id: str) -> pdk
     )
 
 
+def show_vessel_details_panel(imo: str, vessel_name: str):
+    """Display detailed vessel information including dark activity events"""
+    
+    if not imo or imo == '0':
+        st.warning("⚠️ No IMO number available for this vessel.")
+        return
+    
+    with st.expander(f"📋 Vessel Details: {vessel_name} (IMO: {imo})", expanded=True):
+        # Close button
+        if st.button("❌ Close Details", key="close_details"):
+            st.session_state.show_details_imo = None
+            st.session_state.show_details_name = None
+            st.rerun()
+        
+        # Fetch details from Ships API
+        ships_api = SPShipsAPI(sp_username, sp_password)
+        
+        with st.spinner("🔍 Fetching vessel details from S&P Ships API..."):
+            details = ships_api.get_ship_details_by_imo(imo)
+        
+        if not details:
+            st.error("❌ Could not fetch vessel details. Please try again.")
+            return
+        
+        # Vessel Information
+        st.subheader("🚢 Vessel Information")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown(f"**Name:** {details.get('ship_name', 'N/A')}")
+            st.markdown(f"**IMO:** {details.get('imo', 'N/A')}")
+            st.markdown(f"**Flag:** {details.get('flag', 'N/A')}")
+            st.markdown(f"**Type:** {details.get('ship_type', 'N/A')}")
+        
+        with col2:
+            st.markdown(f"**Year Built:** {details.get('year_built', 'N/A')}")
+            st.markdown(f"**GT:** {details.get('gross_tonnage', 'N/A')}")
+            st.markdown(f"**DWT:** {details.get('deadweight', 'N/A')}")
+            st.markdown(f"**Status:** {details.get('status', 'N/A')}")
+        
+        with col3:
+            st.markdown(f"**Class:** {details.get('classification', 'N/A')}")
+            legal = details.get('legal_overall', 0)
+            legal_emoji = '🔴 Severe' if legal == 2 else ('🟡 Warning' if legal == 1 else '✅ Clear')
+            st.markdown(f"**Legal Status:** {legal_emoji}")
+            dark_ind = details.get('dark_activity_indicator', 0)
+            dark_emoji = '🌑 Suspected' if dark_ind == 2 else ('⚠️ Warning' if dark_ind == 1 else '✅ None')
+            st.markdown(f"**Dark Activity:** {dark_emoji}")
+        
+        # Ownership Information
+        st.subheader("🏢 Ownership & Management")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown(f"**Registered Owner:** {details.get('registered_owner', 'N/A')}")
+            st.markdown(f"**Group Beneficial Owner:** {details.get('group_beneficial_owner', 'N/A')}")
+            st.markdown(f"**Operator:** {details.get('operator', 'N/A')}")
+        
+        with col2:
+            st.markdown(f"**Ship Manager:** {details.get('ship_manager', 'N/A')}")
+            st.markdown(f"**Technical Manager:** {details.get('technical_manager', 'N/A')}")
+            st.markdown(f"**DOC Company:** {details.get('doc_company', 'N/A')}")
+        
+        # Dark Activity Events
+        dark_events = details.get('dark_activity_events', [])
+        
+        if dark_events:
+            st.subheader(f"🌑 Dark Activity Events ({len(dark_events)} recorded)")
+            
+            for i, event in enumerate(dark_events):
+                with st.container():
+                    st.markdown(f"---")
+                    st.markdown(f"**Event {i+1}: {event.get('dark_activity_type', 'Unknown')}**")
+                    
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.markdown("**🔴 When Dark:**")
+                        st.markdown(f"Time: {event.get('dark_time', 'N/A')}")
+                        st.markdown(f"Area: {event.get('area_name', 'N/A')}")
+                        st.markdown(f"Duration: {event.get('dark_hours', 'N/A')} hours")
+                        st.markdown(f"Position: {event.get('dark_lat', 0):.4f}, {event.get('dark_lon', 0):.4f}")
+                    
+                    with col2:
+                        st.markdown("**🟢 When Seen Again:**")
+                        st.markdown(f"Time: {event.get('next_seen', 'N/A')}")
+                        st.markdown(f"Position: {event.get('next_lat', 0):.4f}, {event.get('next_lon', 0):.4f}")
+                        st.markdown(f"Speed: {event.get('next_speed', 'N/A')} kts")
+                        st.markdown(f"Draught: {event.get('next_draught', 'N/A')}m")
+                    
+                    with col3:
+                        st.markdown("**📍 Movement Details:**")
+                        st.markdown(f"Speed (dark): {event.get('dark_speed', 'N/A')} kts")
+                        st.markdown(f"Heading (dark): {event.get('dark_heading', 'N/A')}°")
+                        st.markdown(f"Draught (dark): {event.get('dark_draught', 'N/A')}m")
+                        st.markdown(f"Dest (dark): {event.get('dark_destination', 'N/A')}")
+                        st.markdown(f"Dest (next): {event.get('next_destination', 'N/A')}")
+            
+            # Create a mini-map showing dark activity locations
+            st.subheader("🗺️ Dark Activity Locations")
+            dark_locations = []
+            for i, event in enumerate(dark_events):
+                if event.get('dark_lat') and event.get('dark_lon'):
+                    dark_locations.append({
+                        'lat': event['dark_lat'],
+                        'lon': event['dark_lon'],
+                        'type': 'dark',
+                        'label': f"Dark {i+1}",
+                        'color': [255, 0, 0, 200]
+                    })
+                if event.get('next_lat') and event.get('next_lon'):
+                    dark_locations.append({
+                        'lat': event['next_lat'],
+                        'lon': event['next_lon'],
+                        'type': 'seen',
+                        'label': f"Seen {i+1}",
+                        'color': [0, 255, 0, 200]
+                    })
+            
+            if dark_locations:
+                dark_df = pd.DataFrame(dark_locations)
+                
+                # Calculate center
+                center_lat = dark_df['lat'].mean()
+                center_lon = dark_df['lon'].mean()
+                
+                dark_layer = pdk.Layer(
+                    'ScatterplotLayer',
+                    data=dark_df,
+                    get_position=['lon', 'lat'],
+                    get_fill_color='color',
+                    get_radius=5000,
+                    pickable=True,
+                )
+                
+                dark_view = pdk.ViewState(
+                    latitude=center_lat,
+                    longitude=center_lon,
+                    zoom=8,
+                    pitch=0,
+                )
+                
+                dark_deck = pdk.Deck(
+                    map_style='mapbox://styles/mapbox/dark-v10',
+                    initial_view_state=dark_view,
+                    layers=[dark_layer],
+                    tooltip={'text': '{label}'}
+                )
+                
+                st.pydeck_chart(dark_deck, use_container_width=True)
+                st.caption("🔴 Red = Position when went dark | 🟢 Green = Position when seen again")
+        else:
+            st.info("✅ No dark activity events recorded for this vessel.")
+
+
 # ============= STREAMLIT UI =============
 
 st.title("🚢 Singapore Ship Risk Tracker")
@@ -987,9 +1225,9 @@ st.sidebar.caption(coverage_info[selected_coverage])
 
 # Maritime Zones
 st.sidebar.header("🗺️ Maritime Zones")
-show_anchorages = st.sidebar.checkbox("Show Anchorages", value=False)
-show_channels = st.sidebar.checkbox("Show Channels", value=False)
-show_fairways = st.sidebar.checkbox("Show Fairways", value=False)
+show_anchorages = st.sidebar.checkbox("Show Anchorages", value=True)
+show_channels = st.sidebar.checkbox("Show Channels", value=True)
+show_fairways = st.sidebar.checkbox("Show Fairways", value=True)
 
 # Map Zoom Control
 st.sidebar.header("🔍 Map View")
@@ -1369,12 +1607,20 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
         if selected_rows and selected_rows.selection and selected_rows.selection.rows:
             selected_idx = selected_rows.selection.rows[0]
             selected_mmsi = display_df.iloc[selected_idx]['mmsi']
+            selected_imo = display_df.iloc[selected_idx]['imo']
             
-            col1, col2 = st.columns([4, 1])
+            col1, col2, col3 = st.columns([3, 1, 1])
             col1.info(f"Selected: **{table_df.iloc[selected_idx]['Name']}** (IMO: {table_df.iloc[selected_idx]['IMO']}, MMSI: {table_df.iloc[selected_idx]['MMSI']})")
             if col2.button("🗺️ View on Map"):
                 st.session_state.selected_vessel = selected_mmsi
                 st.rerun()
+            if col3.button("📋 View Details"):
+                st.session_state.show_details_imo = selected_imo
+                st.session_state.show_details_name = table_df.iloc[selected_idx]['Name']
+        
+        # Show vessel details panel if requested
+        if st.session_state.get('show_details_imo') and sp_username and sp_password:
+            show_vessel_details_panel(st.session_state.show_details_imo, st.session_state.get('show_details_name', ''))
     
     # Display timestamp
     cache_indicator = " 📦 (cached)" if is_cached else ""
