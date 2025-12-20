@@ -33,6 +33,7 @@ SGT = timezone(timedelta(hours=8))
 # File-based persistent storage
 STORAGE_FILE = "ship_data_cache.pkl"
 RISK_DATA_FILE = "risk_data_cache.pkl"
+MMSI_IMO_CACHE_FILE = "mmsi_imo_cache.pkl"
 
 # AIS vessel type codes
 VESSEL_TYPE_NAMES = {
@@ -158,10 +159,11 @@ def get_vessel_type_category(type_code: int) -> str:
         return "Other"
 
 
-def load_cache() -> Tuple[Dict, Dict]:
-    """Load cached ship and risk data from disk"""
+def load_cache() -> Tuple[Dict, Dict, Dict]:
+    """Load cached ship, risk, and MMSI-to-IMO data from disk"""
     ship_cache = {}
     risk_cache = {}
+    mmsi_imo_cache = {}
     
     if os.path.exists(STORAGE_FILE):
         try:
@@ -177,16 +179,26 @@ def load_cache() -> Tuple[Dict, Dict]:
         except Exception:
             pass
     
-    return ship_cache, risk_cache
+    if os.path.exists(MMSI_IMO_CACHE_FILE):
+        try:
+            with open(MMSI_IMO_CACHE_FILE, 'rb') as f:
+                mmsi_imo_cache = pickle.load(f)
+        except Exception:
+            pass
+    
+    return ship_cache, risk_cache, mmsi_imo_cache
 
 
-def save_cache(ship_cache: Dict, risk_cache: Dict):
-    """Save ship and risk data to disk"""
+def save_cache(ship_cache: Dict, risk_cache: Dict, mmsi_imo_cache: Dict = None):
+    """Save ship, risk, and MMSI-to-IMO data to disk"""
     try:
         with open(STORAGE_FILE, 'wb') as f:
             pickle.dump(ship_cache, f)
         with open(RISK_DATA_FILE, 'wb') as f:
             pickle.dump(risk_cache, f)
+        if mmsi_imo_cache is not None:
+            with open(MMSI_IMO_CACHE_FILE, 'wb') as f:
+                pickle.dump(mmsi_imo_cache, f)
     except Exception as e:
         st.warning(f"Could not save cache: {e}")
 
@@ -302,9 +314,10 @@ def create_vessel_polygon(lat: float, lon: float, heading: float,
 
 # Initialize session state for persistent storage
 if 'ship_static_cache' not in st.session_state:
-    ship_cache, risk_cache = load_cache()
+    ship_cache, risk_cache, mmsi_imo_cache = load_cache()
     st.session_state.ship_static_cache = ship_cache
     st.session_state.risk_data_cache = risk_cache
+    st.session_state.mmsi_to_imo_cache = mmsi_imo_cache
     st.session_state.last_save = time.time()
 
 if 'selected_vessel' not in st.session_state:
@@ -373,7 +386,7 @@ class SPShipsAPI:
         """Look up IMO numbers for multiple MMSIs (with caching)"""
         results = {}
         
-        # Check cache first
+        # Check cache first (now persisted to disk)
         if 'mmsi_to_imo_cache' not in st.session_state:
             st.session_state.mmsi_to_imo_cache = {}
         
@@ -406,8 +419,9 @@ class SPShipsAPI:
         
         progress_bar.empty()
         
-        # Save cache
+        # Save cache to session state and disk
         st.session_state.mmsi_to_imo_cache = cache
+        save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache, cache)
         
         found_count = len([v for v in results.values() if v])
         st.success(f"✅ Found IMO for {found_count}/{len(uncached_mmsis)} vessels")
@@ -453,33 +467,56 @@ class SPMaritimeAPI:
                 if response.status_code == 200:
                     data = response.json()
                     
+                    # Response is a list of compliance records
+                    # Each record has lrimoShipNo as the IMO identifier
                     if isinstance(data, list):
                         for ship in data:
-                            imo = str(ship.get('lrno', ''))
+                            # IMO field is lrimoShipNo (not lrno)
+                            imo = str(ship.get('lrimoShipNo', ''))
                             if not imo:
                                 continue
                             
                             cache[imo] = {
-                                'legal_overall': ship.get('shipLegalOverall', 0),
+                                'legal_overall': ship.get('legalOverall', 0),
                                 'ship_bes_sanction': ship.get('shipBESSanctionList', 0),
                                 'ship_eu_sanction': ship.get('shipEUSanctionList', 0),
                                 'ship_ofac_sanction': ship.get('shipOFACSanctionList', 0),
+                                'ship_ofac_non_sdn': ship.get('shipOFACNonSDNSanctionList', 0),
+                                'ship_ofac_advisory': ship.get('shipOFACAdvisoryList', 0),
                                 'ship_swiss_sanction': ship.get('shipSwissSanctionList', 0),
                                 'ship_un_sanction': ship.get('shipUNSanctionList', 0),
                                 'dark_activity': ship.get('shipDarkActivityIndicator', 0),
                                 'flag_disputed': ship.get('shipFlagDisputed', 0),
+                                'flag_sanctioned': ship.get('shipFlagSanctionedCountry', 0),
+                                'flag_historical_sanctioned': ship.get('shipHistoricalFlagSanctionedCountry', 0),
                                 'port_call_3m': ship.get('shipSanctionedCountryPortCallLast3m', 0),
                                 'port_call_6m': ship.get('shipSanctionedCountryPortCallLast6m', 0),
                                 'port_call_12m': ship.get('shipSanctionedCountryPortCallLast12m', 0),
                                 'owner_ofac': ship.get('shipOwnerOFACSanctionList', 0),
                                 'owner_un': ship.get('shipOwnerUNSanctionList', 0),
+                                'owner_eu': ship.get('shipOwnerEUSanctionList', 0),
+                                'owner_bes': ship.get('shipOwnerBESSanctionList', 0),
+                                'owner_swiss': ship.get('shipOwnerSwissSanctionList', 0),
+                                'owner_uae': ship.get('shipOwnerUAESanctionList', 0),
+                                'owner_australian': ship.get('shipOwnerAustralianSanctionList', 0),
+                                'owner_canadian': ship.get('shipOwnerCanadianSanctionList', 0),
+                                'owner_fatf': ship.get('shipOwnerFATFJurisdiction', 0),
+                                'owner_ofac_country': ship.get('shipOwnerOFACSanctionedCountry', 0),
+                                'owner_historical_ofac_country': ship.get('shipOwnerHistoricalOFACSanctionedCountry', 0),
+                                'owner_parent_non_compliance': ship.get('shipOwnerParentCompanyNonCompliance', 0),
+                                'owner_parent_fatf': ship.get('shipOwnerParentFATFJurisdiction', 0),
+                                'owner_parent_ofac_country': ship.get('shipOwnerParentOFACSanctionedCountry', 0),
+                                'sts_partner_non_compliance': ship.get('shipSTSPartnerNonComplianceLast12m', 0),
+                                'security_legal_dispute': ship.get('shipSecurityLegalDisputeEvent', 0),
+                                'details_no_longer_maintained': ship.get('shipDetailsNoLongerMaintained', 0),
+                                'date_amended': ship.get('dateAmended', ''),
                                 'cached_at': datetime.now(SGT).isoformat()
                             }
                 
                 time.sleep(0.5)  # Rate limiting
             
             st.session_state.risk_data_cache = cache
-            save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
+            save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache, st.session_state.get('mmsi_to_imo_cache', {}))
             st.success(f"✅ Cached compliance data for {len(uncached_imos)} vessels")
                 
         except Exception as e:
@@ -596,7 +633,7 @@ class AISTracker:
         st.session_state.ship_static_cache[str(mmsi)] = static_info
         
         if time.time() - st.session_state.last_save > 60:
-            save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
+            save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache, st.session_state.get('mmsi_to_imo_cache', {}))
             st.session_state.last_save = time.time()
     
     def get_dataframe_with_compliance(self, sp_api: Optional[SPMaritimeAPI] = None, ships_api: Optional[SPShipsAPI] = None) -> pd.DataFrame:
@@ -903,15 +940,21 @@ show_static_only = st.sidebar.checkbox("Ships with static data only", value=Fals
 
 # Cache statistics
 st.sidebar.header("💾 Cache Statistics")
+mmsi_imo_count = len(st.session_state.get('mmsi_to_imo_cache', {}))
+mmsi_imo_found = len([v for v in st.session_state.get('mmsi_to_imo_cache', {}).values() if v])
 st.sidebar.info(f"""
-**Static Data Cache:** {len(st.session_state.ship_static_cache)} vessels\n\n
+**Static Data Cache:** {len(st.session_state.ship_static_cache)} vessels
+
 **Compliance Cache:** {len(st.session_state.risk_data_cache)} vessels
+
+**MMSI→IMO Cache:** {mmsi_imo_found}/{mmsi_imo_count} found
 """)
 
 if st.sidebar.button("🗑️ Clear All Cache"):
     st.session_state.ship_static_cache = {}
     st.session_state.risk_data_cache = {}
-    save_cache({}, {})
+    st.session_state.mmsi_to_imo_cache = {}
+    save_cache({}, {}, {})
     st.sidebar.success("Cache cleared!")
     st.rerun()
 
@@ -1152,7 +1195,7 @@ def update_display():
                 st.rerun()
     
     # Save cache
-    save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
+    save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache, st.session_state.get('mmsi_to_imo_cache', {}))
     
     # Display timestamp in Singapore time (GMT+8)
     sgt_now = datetime.now(SGT)
