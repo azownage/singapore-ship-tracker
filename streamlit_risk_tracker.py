@@ -310,7 +310,92 @@ if 'map_center' not in st.session_state:
     st.session_state.map_center = {"lat": 1.5, "lon": 104.0, "zoom": 8}
 
 
-class SPMaritimeAPI:
+class SPShipsAPI:
+    """S&P Ships API for MMSI to IMO lookup"""
+    
+    def __init__(self, username: str, password: str):
+        self.username = username
+        self.password = password
+        self.base_url = "https://shipsapi.maritime.spglobal.com/MaritimeWCF/APSShipService.svc/RESTFul"
+    
+    def get_imo_by_mmsi(self, mmsi: str) -> Optional[str]:
+        """Look up IMO number from MMSI using Ships API"""
+        try:
+            url = f"{self.base_url}/GetShipDataByMMSI?MMSI={mmsi}"
+            
+            response = requests.get(
+                url,
+                auth=(self.username, self.password),
+                timeout=15
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Extract IMO from response
+                if 'ShipResult' in data and data['ShipResult']:
+                    ship_data = data['ShipResult']
+                    if isinstance(ship_data, dict) and 'APSShipDetail' in ship_data:
+                        imo = ship_data['APSShipDetail'].get('IHSLRorIMOShipNo')
+                        if imo and str(imo) != '0':
+                            return str(imo)
+                    elif isinstance(ship_data, list) and len(ship_data) > 0:
+                        if 'APSShipDetail' in ship_data[0]:
+                            imo = ship_data[0]['APSShipDetail'].get('IHSLRorIMOShipNo')
+                            if imo and str(imo) != '0':
+                                return str(imo)
+            
+            return None
+            
+        except Exception as e:
+            return None
+    
+    def batch_get_imo_by_mmsi(self, mmsi_list: List[str]) -> Dict[str, str]:
+        """Look up IMO numbers for multiple MMSIs (with caching)"""
+        results = {}
+        
+        # Check cache first
+        if 'mmsi_to_imo_cache' not in st.session_state:
+            st.session_state.mmsi_to_imo_cache = {}
+        
+        cache = st.session_state.mmsi_to_imo_cache
+        uncached_mmsis = [m for m in mmsi_list if m not in cache]
+        
+        # Return cached results for already looked up MMSIs
+        for mmsi in mmsi_list:
+            if mmsi in cache:
+                results[mmsi] = cache[mmsi]
+        
+        if not uncached_mmsis:
+            return results
+        
+        st.info(f"🔍 Looking up IMO for {len(uncached_mmsis)} vessels via MMSI (Ships API)...")
+        
+        # Look up each MMSI (with rate limiting)
+        progress_bar = st.progress(0)
+        for i, mmsi in enumerate(uncached_mmsis):
+            imo = self.get_imo_by_mmsi(mmsi)
+            
+            if imo:
+                cache[mmsi] = imo
+                results[mmsi] = imo
+            else:
+                cache[mmsi] = None  # Cache the miss too to avoid re-lookup
+            
+            progress_bar.progress((i + 1) / len(uncached_mmsis))
+            time.sleep(0.1)  # Rate limiting (10 req/sec max)
+        
+        progress_bar.empty()
+        
+        # Save cache
+        st.session_state.mmsi_to_imo_cache = cache
+        
+        found_count = len([v for v in results.values() if v])
+        st.success(f"✅ Found IMO for {found_count}/{len(uncached_mmsis)} vessels")
+        
+        return results
+
+
     """S&P Maritime API Integration for compliance screening"""
     
     def __init__(self, username: str, password: str):
@@ -494,7 +579,7 @@ class AISTracker:
             save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
             st.session_state.last_save = time.time()
     
-    def get_dataframe_with_compliance(self, sp_api: Optional[SPMaritimeAPI] = None) -> pd.DataFrame:
+    def get_dataframe_with_compliance(self, sp_api: Optional[SPMaritimeAPI] = None, ships_api: Optional[SPShipsAPI] = None) -> pd.DataFrame:
         """Get dataframe with compliance indicators"""
         data = []
         
@@ -560,9 +645,26 @@ class AISTracker:
         if len(df) == 0:
             return df
         
-        # Get IMO numbers for compliance checking
+        # Step 1: Get vessels WITH IMO from AIS static data
         valid_imos = [str(imo) for imo in df['imo'].unique() if imo and imo != '0']
         
+        # Step 2: For vessels WITHOUT IMO, try to look up via MMSI using Ships API
+        missing_imo_mask = (df['imo'] == '0') | (df['imo'] == '')
+        missing_imo_mmsis = df.loc[missing_imo_mask, 'mmsi'].astype(str).unique().tolist()
+        
+        if missing_imo_mmsis and ships_api:
+            # Look up IMO by MMSI
+            mmsi_to_imo = ships_api.batch_get_imo_by_mmsi(missing_imo_mmsis)
+            
+            # Update dataframe with found IMOs
+            for idx, row in df.iterrows():
+                if str(row['mmsi']) in mmsi_to_imo and mmsi_to_imo[str(row['mmsi'])]:
+                    found_imo = mmsi_to_imo[str(row['mmsi'])]
+                    df.at[idx, 'imo'] = found_imo
+                    if found_imo not in valid_imos:
+                        valid_imos.append(found_imo)
+        
+        # Step 3: Get compliance data for all IMOs (from AIS + MMSI lookup)
         if valid_imos and sp_api:
             compliance_data = sp_api.get_ship_compliance_data(valid_imos)
             
@@ -595,17 +697,14 @@ def create_vessel_layer(df: pd.DataFrame) -> pdk.Layer:
             width=row['width'] if row['width'] > 0 else 16
         )
         
+        # Build tooltip text for vessel
+        legal_emoji = '🔴' if row['legal_overall'] == 2 else ('🟡' if row['legal_overall'] == 1 else '✅')
+        tooltip_text = f"<b>{row['name']}</b><br/>IMO: {row['imo']}<br/>Type: {row['type_name']}<br/>Status: {row['nav_status_name']}<br/>Speed: {row['speed']:.1f} kts<br/>Legal: {legal_emoji}<br/>Destination: {row['destination']}"
+        
         vessel_polygons.append({
             'polygon': polygon,
             'name': row['name'],
-            'imo': row['imo'],
-            'mmsi': row['mmsi'],
-            'speed': row['speed'],
-            'heading': row['heading'],
-            'nav_status': row['nav_status_name'],
-            'type': row['type_name'],
-            'legal_overall': row['legal_overall'],
-            'destination': row['destination'],
+            'tooltip': tooltip_text,
             'color': row['color']
         })
     
@@ -627,10 +726,12 @@ def create_zone_layer(zones: List[Dict], color: List[int], layer_id: str) -> pdk
         return None
     
     zone_data = []
+    zone_type_name = layer_id.replace('_', ' ').title()
     for zone in zones:
         zone_data.append({
             'polygon': zone['polygon'],
             'name': zone['name'],
+            'tooltip': f"<b>{zone['name']}</b><br/>Type: {zone_type_name}"
         })
     
     return pdk.Layer(
@@ -641,8 +742,8 @@ def create_zone_layer(zones: List[Dict], color: List[int], layer_id: str) -> pdk
         get_fill_color=color,
         get_line_color=[100, 100, 100, 150],
         line_width_min_pixels=1,
-        pickable=False,  # Disable picking to avoid tooltip interference
-        auto_highlight=False,
+        pickable=True,
+        auto_highlight=True,
         extruded=False,
     )
 
@@ -859,10 +960,12 @@ def format_compliance_value(val: int) -> str:
 def update_display():
     """Main function to collect data and update display"""
     
-    # Initialize API
+    # Initialize APIs
     sp_api = None
+    ships_api = None
     if enable_compliance and sp_username and sp_password:
         sp_api = SPMaritimeAPI(sp_username, sp_password)
+        ships_api = SPShipsAPI(sp_username, sp_password)  # Same credentials for Ships API
     
     # Collect AIS data
     with status_placeholder:
@@ -874,7 +977,7 @@ def update_display():
                 st.warning("⚠️ No AISStream API key provided. Please add it to secrets.")
                 return
             
-            df = tracker.get_dataframe_with_compliance(sp_api)
+            df = tracker.get_dataframe_with_compliance(sp_api, ships_api)
     
     status_placeholder.empty()
     
@@ -975,16 +1078,7 @@ def update_display():
             initial_view_state=view_state,
             layers=layers,
             tooltip={
-                'html': '''
-                    <b>{name}</b><br/>
-                    IMO: {imo}<br/>
-                    Type: {type}<br/>
-                    Status: {nav_status}<br/>
-                    Speed: {speed} kts<br/>
-                    Heading: {heading}°<br/>
-                    Legal: {legal_overall}<br/>
-                    Destination: {destination}
-                ''',
+                'html': '{tooltip}',
                 'style': {'backgroundColor': 'steelblue', 'color': 'white'}
             }
         )
@@ -1010,43 +1104,32 @@ def update_display():
         display_df['un_display'] = display_df['un_sanction'].apply(format_compliance_value)
         display_df['ofac_display'] = display_df['ofac_sanction'].apply(format_compliance_value)
         display_df['dark_display'] = display_df['dark_activity'].apply(lambda x: '🌑' if x == 2 else ('⚠️' if x == 1 else '✅'))
+        display_df['speed_fmt'] = display_df['speed'].apply(lambda x: f"{x:.1f}")
         
-        # Create scrollable container
-        table_container = st.container(height=500)
+        # Select and rename columns for display
+        table_df = display_df[['name', 'imo', 'type_name', 'nav_status_name', 'speed_fmt', 'destination', 'has_static_display', 'legal_display', 'un_display', 'ofac_display', 'dark_display', 'mmsi']].copy()
+        table_df.columns = ['Name', 'IMO', 'Type', 'Nav Status', 'Speed', 'Destination', 'Static', 'Legal', 'UN', 'OFAC', 'Dark', 'MMSI']
         
-        with table_container:
-            # Header row
-            header_cols = st.columns([2.5, 1.5, 1.8, 1, 0.8, 0.6, 0.6, 0.6, 0.6, 0.8])
-            header_cols[0].markdown("**Name**")
-            header_cols[1].markdown("**Type**")
-            header_cols[2].markdown("**Nav Status**")
-            header_cols[3].markdown("**Speed**")
-            header_cols[4].markdown("**Static**")
-            header_cols[5].markdown("**Legal**")
-            header_cols[6].markdown("**UN**")
-            header_cols[7].markdown("**OFAC**")
-            header_cols[8].markdown("**Dark**")
-            header_cols[9].markdown("**View**")
+        # Display the dataframe with selection
+        selected_rows = st.dataframe(
+            table_df,
+            use_container_width=True,
+            height=500,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row"
+        )
+        
+        # Handle row selection for map view
+        if selected_rows and selected_rows.selection and selected_rows.selection.rows:
+            selected_idx = selected_rows.selection.rows[0]
+            selected_mmsi = table_df.iloc[selected_idx]['MMSI']
             
-            st.divider()
-            
-            # Data rows
-            for _, row in display_df.iterrows():
-                cols = st.columns([2.5, 1.5, 1.8, 1, 0.8, 0.6, 0.6, 0.6, 0.6, 0.8])
-                
-                cols[0].write(row['name'])
-                cols[1].write(row['type_name'])
-                cols[2].write(row['nav_status_name'])
-                cols[3].write(f"{row['speed']:.1f}")
-                cols[4].write(row['has_static_display'])
-                cols[5].write(row['legal_display'])
-                cols[6].write(row['un_display'])
-                cols[7].write(row['ofac_display'])
-                cols[8].write(row['dark_display'])
-                
-                if cols[9].button("🗺️", key=f"view_{row['mmsi']}"):
-                    st.session_state.selected_vessel = row['mmsi']
-                    st.rerun()
+            col1, col2 = st.columns([4, 1])
+            col1.info(f"Selected: **{table_df.iloc[selected_idx]['Name']}** (MMSI: {selected_mmsi})")
+            if col2.button("🗺️ View on Map"):
+                st.session_state.selected_vessel = selected_mmsi
+                st.rerun()
     
     # Save cache
     save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
