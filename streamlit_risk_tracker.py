@@ -1005,40 +1005,47 @@ def update_display():
         display_df = df.sort_values(['legal_overall', 'speed'], ascending=[False, False]).copy()
         
         # Format boolean/status columns with emojis
-        display_df['has_static'] = display_df['has_static'].map({True: '✅', False: '❌'})
+        display_df['has_static_display'] = display_df['has_static'].map({True: '✅', False: '❌'})
         display_df['legal_display'] = display_df['legal_overall'].apply(format_compliance_value)
         display_df['un_display'] = display_df['un_sanction'].apply(format_compliance_value)
         display_df['ofac_display'] = display_df['ofac_sanction'].apply(format_compliance_value)
         display_df['dark_display'] = display_df['dark_activity'].apply(lambda x: '🌑' if x == 2 else ('⚠️' if x == 1 else '✅'))
         
-        # Select and rename columns for display
-        table_df = display_df[['name', 'imo', 'type_name', 'nav_status_name', 'speed', 'destination', 'has_static', 'legal_display', 'un_display', 'ofac_display', 'dark_display']].copy()
-        table_df.columns = ['Name', 'IMO', 'Type', 'Nav Status', 'Speed', 'Destination', 'Has Static', 'Legal', 'UN', 'OFAC', 'Dark']
+        # Create scrollable container
+        table_container = st.container(height=500)
         
-        # Display the dataframe
-        st.dataframe(
-            table_df,
-            use_container_width=True,
-            height=500,
-            hide_index=True
-        )
-        
-        # Vessel selection for map view
-        st.markdown("##### 🔍 Select Vessel to View on Map")
-        vessel_options = {f"{row['name']} (MMSI: {row['mmsi']})": row['mmsi'] for _, row in display_df.iterrows()}
-        
-        col1, col2 = st.columns([4, 1])
-        with col1:
-            selected_option = st.selectbox(
-                "Select vessel:",
-                options=[""] + list(vessel_options.keys()),
-                label_visibility="collapsed"
-            )
-        
-        with col2:
-            if st.button("🗺️ View", disabled=not selected_option):
-                if selected_option:
-                    st.session_state.selected_vessel = vessel_options[selected_option]
+        with table_container:
+            # Header row
+            header_cols = st.columns([2.5, 1.5, 1.8, 1, 0.8, 0.6, 0.6, 0.6, 0.6, 0.8])
+            header_cols[0].markdown("**Name**")
+            header_cols[1].markdown("**Type**")
+            header_cols[2].markdown("**Nav Status**")
+            header_cols[3].markdown("**Speed**")
+            header_cols[4].markdown("**Static**")
+            header_cols[5].markdown("**Legal**")
+            header_cols[6].markdown("**UN**")
+            header_cols[7].markdown("**OFAC**")
+            header_cols[8].markdown("**Dark**")
+            header_cols[9].markdown("**View**")
+            
+            st.divider()
+            
+            # Data rows
+            for _, row in display_df.iterrows():
+                cols = st.columns([2.5, 1.5, 1.8, 1, 0.8, 0.6, 0.6, 0.6, 0.6, 0.8])
+                
+                cols[0].write(row['name'])
+                cols[1].write(row['type_name'])
+                cols[2].write(row['nav_status_name'])
+                cols[3].write(f"{row['speed']:.1f}")
+                cols[4].write(row['has_static_display'])
+                cols[5].write(row['legal_display'])
+                cols[6].write(row['un_display'])
+                cols[7].write(row['ofac_display'])
+                cols[8].write(row['dark_display'])
+                
+                if cols[9].button("🗺️", key=f"view_{row['mmsi']}"):
+                    st.session_state.selected_vessel = row['mmsi']
                     st.rerun()
     
     # Save cache
