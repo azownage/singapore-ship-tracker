@@ -678,7 +678,7 @@ st.sidebar.subheader("Coverage Area")
 coverage_options = {
     "Singapore Strait Only": [[[1.15, 103.55], [1.50, 104.10]]],
     "Singapore + Approaches": [[[1.0, 103.3], [1.6, 104.3]]],
-    "Malacca to SCS (Dark Fleet)": [[[0.5, 102.0], [2.5, 106.0]]],
+    "Malacca to South China Sea (Dark Fleet)": [[[0.5, 102.0], [2.5, 106.0]]],
     "Extended Malacca Strait": [[[-0.5, 100.0], [3.0, 106.0]]],
     "Full Regional (Max Coverage)": [[[-1.0, 99.0], [4.0, 108.0]]]
 }
@@ -694,7 +694,7 @@ coverage_bbox = coverage_options[selected_coverage]
 coverage_info = {
     "Singapore Strait Only": "~50km² - Singapore port and anchorages",
     "Singapore + Approaches": "~150km² - Includes eastern/western approaches", 
-    "Malacca to SCS (Dark Fleet)": "~800km² - Main transit route for dark fleet",
+    "Malacca to South China Sea (Dark Fleet)": "~800km² - Main transit route for dark fleet",
     "Extended Malacca Strait": "~2000km² - Full Malacca Strait coverage",
     "Full Regional (Max Coverage)": "~4000km² - Maximum regional coverage"
 }
