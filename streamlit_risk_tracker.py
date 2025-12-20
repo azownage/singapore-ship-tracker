@@ -336,37 +336,33 @@ class SPShipsAPI:
             if response.status_code == 200:
                 data = response.json()
                 
-                # Extract IMO from response - check different response structures
-                # Based on API docs, response contains ShipResult with APSShipDetail
+                # Based on actual API response structure:
+                # Response has: apsStatus, shipCount, apsShipDetail
+                # IMO is in apsShipDetail.ihslRorIMOShipNo (camelCase)
+                
+                if 'apsShipDetail' in data and data['apsShipDetail']:
+                    detail = data['apsShipDetail']
+                    # The field is ihslRorIMOShipNo (camelCase with lowercase 'ihs')
+                    imo = detail.get('ihslRorIMOShipNo') or detail.get('lrno')
+                    if imo and str(imo) != '0' and str(imo) != '':
+                        return str(imo)
+                
+                # Also try alternate capitalizations just in case
+                if 'ApsShipDetail' in data and data['ApsShipDetail']:
+                    detail = data['ApsShipDetail']
+                    imo = detail.get('ihslRorIMOShipNo') or detail.get('IhslRorIMOShipNo') or detail.get('lrno')
+                    if imo and str(imo) != '0' and str(imo) != '':
+                        return str(imo)
+                
+                # Check ShipResult wrapper (older API versions)
                 if 'ShipResult' in data and data['ShipResult']:
                     ship_data = data['ShipResult']
-                    
-                    # Check if APSShipDetail is directly in ShipResult
                     if isinstance(ship_data, dict):
-                        if 'APSShipDetail' in ship_data:
-                            detail = ship_data['APSShipDetail']
-                            imo = detail.get('IHSLRorIMOShipNo') or detail.get('LRIMOShipNo') or detail.get('IMO')
-                            if imo and str(imo) != '0':
+                        if 'apsShipDetail' in ship_data:
+                            detail = ship_data['apsShipDetail']
+                            imo = detail.get('ihslRorIMOShipNo') or detail.get('lrno')
+                            if imo and str(imo) != '0' and str(imo) != '':
                                 return str(imo)
-                        # Or IMO might be directly in ShipResult
-                        imo = ship_data.get('IHSLRorIMOShipNo') or ship_data.get('LRIMOShipNo') or ship_data.get('IMO')
-                        if imo and str(imo) != '0':
-                            return str(imo)
-                    elif isinstance(ship_data, list) and len(ship_data) > 0:
-                        first_ship = ship_data[0]
-                        if 'APSShipDetail' in first_ship:
-                            detail = first_ship['APSShipDetail']
-                            imo = detail.get('IHSLRorIMOShipNo') or detail.get('LRIMOShipNo') or detail.get('IMO')
-                            if imo and str(imo) != '0':
-                                return str(imo)
-                        imo = first_ship.get('IHSLRorIMOShipNo') or first_ship.get('LRIMOShipNo') or first_ship.get('IMO')
-                        if imo and str(imo) != '0':
-                            return str(imo)
-                
-                # Also check if IMO is at root level of response
-                imo = data.get('IHSLRorIMOShipNo') or data.get('LRIMOShipNo') or data.get('IMO')
-                if imo and str(imo) != '0':
-                    return str(imo)
             
             return None
             
