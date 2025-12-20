@@ -2,13 +2,14 @@
 Singapore AIS Tracker with S&P Maritime Risk Intelligence
 Real-time vessel tracking with compliance and risk indicators
 Enhanced with persistent storage, vessel polygons, and maritime zones
+v8 - Fixed: MMSI after IMO in table, IMO lookup from Ships API, SGT timestamp
 """
 
 import streamlit as st
 import asyncio
 import websockets
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import pandas as pd
 import pydeck as pdk
 from collections import defaultdict
@@ -25,6 +26,9 @@ st.set_page_config(
     page_icon="🚢",
     layout="wide"
 )
+
+# Singapore timezone (GMT+8)
+SGT = timezone(timedelta(hours=8))
 
 # File-based persistent storage
 STORAGE_FILE = "ship_data_cache.pkl"
@@ -332,18 +336,37 @@ class SPShipsAPI:
             if response.status_code == 200:
                 data = response.json()
                 
-                # Extract IMO from response
+                # Extract IMO from response - check different response structures
+                # Based on API docs, response contains ShipResult with APSShipDetail
                 if 'ShipResult' in data and data['ShipResult']:
                     ship_data = data['ShipResult']
-                    if isinstance(ship_data, dict) and 'APSShipDetail' in ship_data:
-                        imo = ship_data['APSShipDetail'].get('IHSLRorIMOShipNo')
+                    
+                    # Check if APSShipDetail is directly in ShipResult
+                    if isinstance(ship_data, dict):
+                        if 'APSShipDetail' in ship_data:
+                            detail = ship_data['APSShipDetail']
+                            imo = detail.get('IHSLRorIMOShipNo') or detail.get('LRIMOShipNo') or detail.get('IMO')
+                            if imo and str(imo) != '0':
+                                return str(imo)
+                        # Or IMO might be directly in ShipResult
+                        imo = ship_data.get('IHSLRorIMOShipNo') or ship_data.get('LRIMOShipNo') or ship_data.get('IMO')
                         if imo and str(imo) != '0':
                             return str(imo)
                     elif isinstance(ship_data, list) and len(ship_data) > 0:
-                        if 'APSShipDetail' in ship_data[0]:
-                            imo = ship_data[0]['APSShipDetail'].get('IHSLRorIMOShipNo')
+                        first_ship = ship_data[0]
+                        if 'APSShipDetail' in first_ship:
+                            detail = first_ship['APSShipDetail']
+                            imo = detail.get('IHSLRorIMOShipNo') or detail.get('LRIMOShipNo') or detail.get('IMO')
                             if imo and str(imo) != '0':
                                 return str(imo)
+                        imo = first_ship.get('IHSLRorIMOShipNo') or first_ship.get('LRIMOShipNo') or first_ship.get('IMO')
+                        if imo and str(imo) != '0':
+                            return str(imo)
+                
+                # Also check if IMO is at root level of response
+                imo = data.get('IHSLRorIMOShipNo') or data.get('LRIMOShipNo') or data.get('IMO')
+                if imo and str(imo) != '0':
+                    return str(imo)
             
             return None
             
@@ -454,7 +477,7 @@ class SPMaritimeAPI:
                                 'port_call_12m': ship.get('shipSanctionedCountryPortCallLast12m', 0),
                                 'owner_ofac': ship.get('shipOwnerOFACSanctionList', 0),
                                 'owner_un': ship.get('shipOwnerUNSanctionList', 0),
-                                'cached_at': datetime.now().isoformat()
+                                'cached_at': datetime.now(SGT).isoformat()
                             }
                 
                 time.sleep(0.5)  # Rate limiting
@@ -539,7 +562,7 @@ class AISTracker:
             'true_heading': position_data.get('TrueHeading', 511),
             'nav_status': position_data.get('NavigationalStatus', 15),
             'ship_name': metadata.get('ShipName', 'Unknown'),
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now(SGT).isoformat()
         }
     
     def process_static(self, ais_message: Dict):
@@ -570,7 +593,7 @@ class AISTracker:
             'width': dim_c + dim_d,
             'destination': static_data.get('Destination', 'Unknown'),
             'call_sign': static_data.get('CallSign', ''),
-            'cached_at': datetime.now().isoformat()
+            'cached_at': datetime.now(SGT).isoformat()
         }
         
         self.ships[mmsi]['static_data'] = static_info
@@ -700,7 +723,7 @@ def create_vessel_layer(df: pd.DataFrame) -> pdk.Layer:
         
         # Build tooltip text for vessel
         legal_emoji = '🔴' if row['legal_overall'] == 2 else ('🟡' if row['legal_overall'] == 1 else '✅')
-        tooltip_text = f"<b>{row['name']}</b><br/>IMO: {row['imo']}<br/>Type: {row['type_name']}<br/>Status: {row['nav_status_name']}<br/>Speed: {row['speed']:.1f} kts<br/>Legal: {legal_emoji}<br/>Destination: {row['destination']}"
+        tooltip_text = f"<b>{row['name']}</b><br/>IMO: {row['imo']}<br/>MMSI: {row['mmsi']}<br/>Type: {row['type_name']}<br/>Status: {row['nav_status_name']}<br/>Speed: {row['speed']:.1f} kts<br/>Legal: {legal_emoji}<br/>Destination: {row['destination']}"
         
         vessel_polygons.append({
             'polygon': polygon,
@@ -1107,9 +1130,9 @@ def update_display():
         display_df['dark_display'] = display_df['dark_activity'].apply(lambda x: '🌑' if x == 2 else ('⚠️' if x == 1 else '✅'))
         display_df['speed_fmt'] = display_df['speed'].apply(lambda x: f"{x:.1f}")
         
-        # Select and rename columns for display
-        table_df = display_df[['name', 'imo', 'type_name', 'nav_status_name', 'speed_fmt', 'destination', 'has_static_display', 'legal_display', 'un_display', 'ofac_display', 'dark_display', 'mmsi']].copy()
-        table_df.columns = ['Name', 'IMO', 'Type', 'Nav Status', 'Speed', 'Destination', 'Static', 'Legal', 'UN', 'OFAC', 'Dark', 'MMSI']
+        # Select and rename columns for display - IMO first, then MMSI
+        table_df = display_df[['name', 'imo', 'mmsi', 'type_name', 'nav_status_name', 'speed_fmt', 'destination', 'has_static_display', 'legal_display', 'un_display', 'ofac_display', 'dark_display']].copy()
+        table_df.columns = ['Name', 'IMO', 'MMSI', 'Type', 'Nav Status', 'Speed', 'Destination', 'Static', 'Legal', 'UN', 'OFAC', 'Dark']
         
         # Display the dataframe with selection
         selected_rows = st.dataframe(
@@ -1124,10 +1147,10 @@ def update_display():
         # Handle row selection for map view
         if selected_rows and selected_rows.selection and selected_rows.selection.rows:
             selected_idx = selected_rows.selection.rows[0]
-            selected_mmsi = table_df.iloc[selected_idx]['MMSI']
+            selected_mmsi = display_df.iloc[selected_idx]['mmsi']
             
             col1, col2 = st.columns([4, 1])
-            col1.info(f"Selected: **{table_df.iloc[selected_idx]['Name']}** (MMSI: {selected_mmsi})")
+            col1.info(f"Selected: **{table_df.iloc[selected_idx]['Name']}** (IMO: {table_df.iloc[selected_idx]['IMO']}, MMSI: {table_df.iloc[selected_idx]['MMSI']})")
             if col2.button("🗺️ View on Map"):
                 st.session_state.selected_vessel = selected_mmsi
                 st.rerun()
@@ -1135,7 +1158,9 @@ def update_display():
     # Save cache
     save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
     
-    st.success(f"✅ Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    # Display timestamp in Singapore time (GMT+8)
+    sgt_now = datetime.now(SGT)
+    st.success(f"✅ Last updated: {sgt_now.strftime('%Y-%m-%d %H:%M:%S')} SGT (GMT+8)")
 
 
 # Control buttons
