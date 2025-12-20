@@ -473,7 +473,19 @@ class SPShipsAPI:
             return None
     
     def get_imo_by_mmsi(self, mmsi: str) -> Optional[str]:
-        """Look up IMO number from MMSI using Ships API"""
+        """Look up IMO number from MMSI using Ships API
+        
+        API: GetShipDataByMMSI
+        Response structure:
+        {
+            "shipCount": 1,
+            "APSShipDetail": {
+                "IHSLRorIMOShipNo": "9750892",
+                ...
+            },
+            "APSStatus": {...}
+        }
+        """
         try:
             url = f"{self.base_url}/GetShipDataByMMSI?MMSI={mmsi}"
             
@@ -486,21 +498,23 @@ class SPShipsAPI:
             if response.status_code == 200:
                 data = response.json()
                 
-                # Based on actual API response structure (case-sensitive!):
-                # Response has: APSStatus, shipCount, APSShipDetail
-                # IMO is in APSShipDetail.IHSLRorIMOShipNo
+                # Check shipCount first - if 0, no ship found
+                ship_count = data.get('shipCount', 0)
+                if ship_count == 0:
+                    return None
                 
-                # Try exact case first (as per actual API response)
+                # APSShipDetail is directly in root (not wrapped in ShipResult)
+                # Field name is IHSLRorIMOShipNo (exact case)
                 if 'APSShipDetail' in data and data['APSShipDetail']:
                     detail = data['APSShipDetail']
                     imo = detail.get('IHSLRorIMOShipNo')
                     if imo and str(imo) != '0' and str(imo) != '':
                         return str(imo)
                 
-                # Fallback: try lowercase variant
+                # Fallback: try lowercase variant (some API versions)
                 if 'apsShipDetail' in data and data['apsShipDetail']:
                     detail = data['apsShipDetail']
-                    imo = detail.get('ihslRorIMOShipNo') or detail.get('IHSLRorIMOShipNo')
+                    imo = detail.get('IHSLRorIMOShipNo') or detail.get('ihslRorIMOShipNo')
                     if imo and str(imo) != '0' and str(imo) != '':
                         return str(imo)
             
@@ -518,11 +532,14 @@ class SPShipsAPI:
             st.session_state.mmsi_to_imo_cache = {}
         
         cache = st.session_state.mmsi_to_imo_cache
-        uncached_mmsis = [m for m in mmsi_list if m not in cache]
         
-        # Return cached results for already looked up MMSIs
+        # Only skip MMSIs that have a VALID IMO cached (not None)
+        # This allows retrying failed lookups
+        uncached_mmsis = [m for m in mmsi_list if m not in cache or cache.get(m) is None]
+        
+        # Return cached results for already looked up MMSIs (only valid ones)
         for mmsi in mmsi_list:
-            if mmsi in cache:
+            if mmsi in cache and cache[mmsi] is not None:
                 results[mmsi] = cache[mmsi]
         
         if not uncached_mmsis:
@@ -532,14 +549,15 @@ class SPShipsAPI:
         
         # Look up each MMSI (with rate limiting)
         progress_bar = st.progress(0)
+        found_this_batch = 0
         for i, mmsi in enumerate(uncached_mmsis):
             imo = self.get_imo_by_mmsi(mmsi)
             
             if imo:
                 cache[mmsi] = imo
                 results[mmsi] = imo
-            else:
-                cache[mmsi] = None  # Cache the miss too to avoid re-lookup
+                found_this_batch += 1
+            # Don't cache failures - allow retry next time
             
             progress_bar.progress((i + 1) / len(uncached_mmsis))
             time.sleep(0.1)  # Rate limiting (10 req/sec max)
@@ -550,8 +568,7 @@ class SPShipsAPI:
         st.session_state.mmsi_to_imo_cache = cache
         save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache, cache)
         
-        found_count = len([v for v in results.values() if v])
-        st.success(f"✅ Found IMO for {found_count}/{len(uncached_mmsis)} vessels")
+        st.success(f"✅ Found IMO for {found_this_batch}/{len(uncached_mmsis)} vessels (this lookup)")
         
         return results
 
@@ -1334,8 +1351,10 @@ show_static_only = st.sidebar.checkbox("Ships with static data only", value=Fals
 
 # Cache statistics
 st.sidebar.header("💾 Cache Statistics")
-mmsi_imo_count = len(st.session_state.get('mmsi_to_imo_cache', {}))
-mmsi_imo_found = len([v for v in st.session_state.get('mmsi_to_imo_cache', {}).values() if v])
+mmsi_cache = st.session_state.get('mmsi_to_imo_cache', {})
+mmsi_imo_count = len(mmsi_cache)
+mmsi_imo_found = len([v for v in mmsi_cache.values() if v])
+mmsi_imo_failed = len([v for v in mmsi_cache.values() if v is None])
 vessel_count = len([k for k in st.session_state.get('vessel_positions', {}).keys() if k != '_last_update'])
 last_update = st.session_state.get('last_data_update', 'Never')
 
@@ -1346,12 +1365,13 @@ st.sidebar.info(f"""
 
 **Compliance:** {len(st.session_state.risk_data_cache)} vessels
 
-**MMSI→IMO:** {mmsi_imo_found}/{mmsi_imo_count} found
+**MMSI→IMO:** {mmsi_imo_found} found
 
 **Last Update:** {last_update if last_update else 'Never'}
 """)
 
-if st.sidebar.button("🗑️ Clear All Cache"):
+col1, col2 = st.sidebar.columns(2)
+if col1.button("🗑️ Clear All"):
     st.session_state.ship_static_cache = {}
     st.session_state.risk_data_cache = {}
     st.session_state.mmsi_to_imo_cache = {}
@@ -1359,6 +1379,12 @@ if st.sidebar.button("🗑️ Clear All Cache"):
     st.session_state.last_data_update = None
     save_cache({}, {}, {}, {})
     st.sidebar.success("Cache cleared!")
+    st.rerun()
+
+if col2.button("🔄 Retry IMO"):
+    # Clear only the MMSI cache to force re-lookup
+    st.session_state.mmsi_to_imo_cache = {}
+    st.sidebar.success("MMSI→IMO cache cleared! Will retry lookups.")
     st.rerun()
 
 # Main content placeholders
