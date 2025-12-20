@@ -828,7 +828,7 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
         if "OFAC Sanctions" in selected_sanctions:
             sanction_mask = sanction_mask | (filtered_df['ofac_sanction'] == 2)
         if "Dark Activity" in selected_sanctions:
-            sanction_mask = sanction_mask | (filtered_df['dark_activity'] == 2)
+            sanction_mask = sanction_mask | (filtered_df['dark_activity'] >= 1)  # Include both warning (1) and severe (2)
         filtered_df = filtered_df[sanction_mask]
     
     # Vessel type filter (skip if "All" is selected)
