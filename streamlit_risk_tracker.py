@@ -396,6 +396,7 @@ class SPShipsAPI:
         return results
 
 
+class SPMaritimeAPI:
     """S&P Maritime API Integration for compliance screening"""
     
     def __init__(self, username: str, password: str):
