@@ -1107,30 +1107,37 @@ def update_display():
         display_df['dark_display'] = display_df['dark_activity'].apply(lambda x: '🌑' if x == 2 else ('⚠️' if x == 1 else '✅'))
         display_df['speed_fmt'] = display_df['speed'].apply(lambda x: f"{x:.1f}")
         
-        # Select and rename columns for display
-        table_df = display_df[['name', 'imo', 'type_name', 'nav_status_name', 'speed_fmt', 'destination', 'has_static_display', 'legal_display', 'un_display', 'ofac_display', 'dark_display', 'mmsi']].copy()
-        table_df.columns = ['Name', 'IMO', 'Type', 'Nav Status', 'Speed', 'Destination', 'Static', 'Legal', 'UN', 'OFAC', 'Dark', 'MMSI']
+        # Create table with View buttons
+        # Header row
+        header_cols = st.columns([0.5, 2, 1, 1.2, 1.5, 1.5, 0.8, 1.5, 0.6, 0.5, 0.5, 0.5, 0.5])
+        headers = ['View', 'Name', 'IMO', 'MMSI', 'Type', 'Nav Status', 'Speed', 'Destination', 'Static', 'Legal', 'UN', 'OFAC', 'Dark']
+        for col, header in zip(header_cols, headers):
+            col.markdown(f"**{header}**")
         
-        # Display the dataframe with selection
-        selected_rows = st.dataframe(
-            table_df,
-            use_container_width=True,
-            height=500,
-            hide_index=True,
-            on_select="rerun",
-            selection_mode="single-row"
-        )
+        st.divider()
         
-        # Handle row selection for map view
-        if selected_rows and selected_rows.selection and selected_rows.selection.rows:
-            selected_idx = selected_rows.selection.rows[0]
-            selected_mmsi = table_df.iloc[selected_idx]['MMSI']
-            
-            col1, col2 = st.columns([4, 1])
-            col1.info(f"Selected: **{table_df.iloc[selected_idx]['Name']}** (MMSI: {selected_mmsi})")
-            if col2.button("🗺️ View on Map"):
-                st.session_state.selected_vessel = selected_mmsi
-                st.rerun()
+        # Data rows in scrollable container
+        table_container = st.container(height=450)
+        with table_container:
+            for _, row in display_df.iterrows():
+                cols = st.columns([0.5, 2, 1, 1.2, 1.5, 1.5, 0.8, 1.5, 0.6, 0.5, 0.5, 0.5, 0.5])
+                
+                if cols[0].button("🗺️", key=f"view_{row['mmsi']}"):
+                    st.session_state.selected_vessel = row['mmsi']
+                    st.rerun()
+                
+                cols[1].write(row['name'])
+                cols[2].write(row['imo'])
+                cols[3].write(str(row['mmsi']))
+                cols[4].write(row['type_name'])
+                cols[5].write(row['nav_status_name'])
+                cols[6].write(f"{row['speed']:.1f}")
+                cols[7].write(row['destination'])
+                cols[8].write(row['has_static_display'])
+                cols[9].write(row['legal_display'])
+                cols[10].write(row['un_display'])
+                cols[11].write(row['ofac_display'])
+                cols[12].write(row['dark_display'])
     
     # Save cache
     save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
