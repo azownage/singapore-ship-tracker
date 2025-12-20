@@ -885,7 +885,7 @@ show_static_only = st.sidebar.checkbox("Ships with static data only", value=Fals
 # Cache statistics
 st.sidebar.header("💾 Cache Statistics")
 st.sidebar.info(f"""
-**Static Data Cache:** {len(st.session_state.ship_static_cache)} vessels
+**Static Data Cache:** {len(st.session_state.ship_static_cache)} vessels\n\n
 **Compliance Cache:** {len(st.session_state.risk_data_cache)} vessels
 """)
 
@@ -1107,35 +1107,30 @@ def update_display():
         display_df['dark_display'] = display_df['dark_activity'].apply(lambda x: '🌑' if x == 2 else ('⚠️' if x == 1 else '✅'))
         display_df['speed_fmt'] = display_df['speed'].apply(lambda x: f"{x:.1f}")
         
-        # Select and rename columns for display (MMSI after IMO)
-        table_df = display_df[['name', 'imo', 'mmsi', 'type_name', 'nav_status_name', 'speed_fmt', 'destination', 'has_static_display', 'legal_display', 'un_display', 'ofac_display', 'dark_display']].copy()
-        table_df.columns = ['Name', 'IMO', 'MMSI', 'Type', 'Nav Status', 'Speed', 'Destination', 'Static', 'Legal', 'UN', 'OFAC', 'Dark']
+        # Select and rename columns for display
+        table_df = display_df[['name', 'imo', 'type_name', 'nav_status_name', 'speed_fmt', 'destination', 'has_static_display', 'legal_display', 'un_display', 'ofac_display', 'dark_display', 'mmsi']].copy()
+        table_df.columns = ['Name', 'IMO', 'Type', 'Nav Status', 'Speed', 'Destination', 'Static', 'Legal', 'UN', 'OFAC', 'Dark', 'MMSI']
         
-        # Display the dataframe
-        st.dataframe(
+        # Display the dataframe with selection
+        selected_rows = st.dataframe(
             table_df,
             use_container_width=True,
             height=500,
-            hide_index=True
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row"
         )
         
-        # Vessel selection for map view
-        st.markdown("##### 🔍 Select Vessel to View on Map")
-        vessel_options = {f"{row['name']} (IMO: {row['imo']}, MMSI: {row['mmsi']})": row['mmsi'] for _, row in display_df.iterrows()}
-        
-        col1, col2 = st.columns([4, 1])
-        with col1:
-            selected_option = st.selectbox(
-                "Select vessel:",
-                options=[""] + list(vessel_options.keys()),
-                label_visibility="collapsed"
-            )
-        
-        with col2:
-            if st.button("🗺️ View", disabled=not selected_option):
-                if selected_option:
-                    st.session_state.selected_vessel = vessel_options[selected_option]
-                    st.rerun()
+        # Handle row selection for map view
+        if selected_rows and selected_rows.selection and selected_rows.selection.rows:
+            selected_idx = selected_rows.selection.rows[0]
+            selected_mmsi = table_df.iloc[selected_idx]['MMSI']
+            
+            col1, col2 = st.columns([4, 1])
+            col1.info(f"Selected: **{table_df.iloc[selected_idx]['Name']}** (MMSI: {selected_mmsi})")
+            if col2.button("🗺️ View on Map"):
+                st.session_state.selected_vessel = selected_mmsi
+                st.rerun()
     
     # Save cache
     save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
