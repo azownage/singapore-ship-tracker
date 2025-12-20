@@ -693,20 +693,22 @@ st.sidebar.header("🔍 Filters")
 
 # Compliance filters
 st.sidebar.subheader("Compliance")
-show_severe_only = st.sidebar.checkbox("Severe only (🔴)", value=False)
-show_warning_plus = st.sidebar.checkbox("Warning+ (🟡 & 🔴)", value=False)
-show_un_ofac = st.sidebar.checkbox("UN/OFAC sanctions only", value=False)
+compliance_options = ["Severe (🔴)", "Warning (🟡)", "Clear (✅)"]
+selected_compliance = st.sidebar.multiselect("Legal Status", compliance_options, default=compliance_options)
+
+sanction_options = ["UN Sanctions", "OFAC Sanctions"]
+selected_sanctions = st.sidebar.multiselect("Sanctions", sanction_options)
 
 # Vessel type filter
 st.sidebar.subheader("Vessel Type")
-vessel_types = ["All", "Cargo", "Tanker", "Passenger", "Tug", "Fishing", 
+vessel_types = ["Cargo", "Tanker", "Passenger", "Tug", "Fishing", 
                 "High Speed Craft", "Pilot", "SAR", "Port Tender", "Law Enforcement", "Other", "Unknown"]
-selected_type = st.sidebar.selectbox("Type", vessel_types)
+selected_types = st.sidebar.multiselect("Types", vessel_types, default=vessel_types)
 
 # Navigation status filter
 st.sidebar.subheader("Navigation Status")
-nav_statuses = ["All"] + list(NAV_STATUS_NAMES.values())
-selected_nav = st.sidebar.selectbox("Status", nav_statuses)
+nav_status_options = list(NAV_STATUS_NAMES.values())
+selected_nav_statuses = st.sidebar.multiselect("Status", nav_status_options, default=nav_status_options)
 
 # Static data filter
 show_static_only = st.sidebar.checkbox("Ships with static data only", value=False)
@@ -741,21 +743,31 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
     filtered_df = df.copy()
     
     # Compliance filters
-    if show_severe_only:
-        filtered_df = filtered_df[filtered_df['legal_overall'] == 2]
-    elif show_warning_plus:
-        filtered_df = filtered_df[filtered_df['legal_overall'] >= 1]
+    compliance_map = {
+        "Severe (🔴)": 2,
+        "Warning (🟡)": 1,
+        "Clear (✅)": 0
+    }
+    selected_levels = [compliance_map[c] for c in selected_compliance if c in compliance_map]
+    if selected_levels:
+        filtered_df = filtered_df[filtered_df['legal_overall'].isin(selected_levels)]
     
-    if show_un_ofac:
-        filtered_df = filtered_df[(filtered_df['un_sanction'] == 2) | (filtered_df['ofac_sanction'] == 2)]
+    # Sanctions filter
+    if selected_sanctions:
+        sanction_mask = pd.Series([False] * len(filtered_df), index=filtered_df.index)
+        if "UN Sanctions" in selected_sanctions:
+            sanction_mask = sanction_mask | (filtered_df['un_sanction'] == 2)
+        if "OFAC Sanctions" in selected_sanctions:
+            sanction_mask = sanction_mask | (filtered_df['ofac_sanction'] == 2)
+        filtered_df = filtered_df[sanction_mask]
     
     # Vessel type filter
-    if selected_type != "All":
-        filtered_df = filtered_df[filtered_df['type_name'] == selected_type]
+    if selected_types:
+        filtered_df = filtered_df[filtered_df['type_name'].isin(selected_types)]
     
     # Navigation status filter
-    if selected_nav != "All":
-        filtered_df = filtered_df[filtered_df['nav_status_name'] == selected_nav]
+    if selected_nav_statuses:
+        filtered_df = filtered_df[filtered_df['nav_status_name'].isin(selected_nav_statuses)]
     
     # Static data filter
     if show_static_only:
@@ -922,36 +934,40 @@ def update_display():
         # Sort by legal_overall (most severe first) then by speed
         display_df = df.sort_values(['legal_overall', 'speed'], ascending=[False, False]).copy()
         
-        # Create a scrollable container with fixed height
-        table_container = st.container(height=500)
+        # Format boolean/status columns with emojis
+        display_df['has_static'] = display_df['has_static'].map({True: '✅', False: '❌'})
+        display_df['legal_display'] = display_df['legal_overall'].apply(format_compliance_value)
+        display_df['un_display'] = display_df['un_sanction'].apply(format_compliance_value)
+        display_df['ofac_display'] = display_df['ofac_sanction'].apply(format_compliance_value)
         
-        with table_container:
-            # Header row
-            header_cols = st.columns([3, 2, 2.5, 1.2, 0.8, 0.8, 0.8, 1])
-            header_cols[0].markdown("**Name**")
-            header_cols[1].markdown("**Type**")
-            header_cols[2].markdown("**Nav Status**")
-            header_cols[3].markdown("**Speed**")
-            header_cols[4].markdown("**Legal**")
-            header_cols[5].markdown("**UN**")
-            header_cols[6].markdown("**OFAC**")
-            header_cols[7].markdown("**View**")
-            
-            st.divider()
-            
-            for idx, row in display_df.iterrows():
-                cols = st.columns([3, 2, 2.5, 1.2, 0.8, 0.8, 0.8, 1])
-                
-                cols[0].write(row['name'])
-                cols[1].write(row['type_name'])
-                cols[2].write(row['nav_status_name'])
-                cols[3].write(f"{row['speed']:.1f} kts")
-                cols[4].write(format_compliance_value(row['legal_overall']))
-                cols[5].write(format_compliance_value(row['un_sanction']))
-                cols[6].write(format_compliance_value(row['ofac_sanction']))
-                
-                if cols[7].button("🗺️", key=f"view_{row['mmsi']}"):
-                    st.session_state.selected_vessel = row['mmsi']
+        # Select and rename columns for display
+        table_df = display_df[['name', 'imo', 'type_name', 'nav_status_name', 'speed', 'destination', 'has_static', 'legal_display', 'un_display', 'ofac_display']].copy()
+        table_df.columns = ['Name', 'IMO', 'Type', 'Nav Status', 'Speed', 'Destination', 'Has Static', 'Legal', 'UN', 'OFAC']
+        
+        # Display the dataframe
+        st.dataframe(
+            table_df,
+            use_container_width=True,
+            height=500,
+            hide_index=True
+        )
+        
+        # Vessel selection for map view
+        st.markdown("##### 🔍 Select Vessel to View on Map")
+        vessel_options = {f"{row['name']} (MMSI: {row['mmsi']})": row['mmsi'] for _, row in display_df.iterrows()}
+        
+        col1, col2 = st.columns([4, 1])
+        with col1:
+            selected_option = st.selectbox(
+                "Select vessel:",
+                options=[""] + list(vessel_options.keys()),
+                label_visibility="collapsed"
+            )
+        
+        with col2:
+            if st.button("🗺️ View", disabled=not selected_option):
+                if selected_option:
+                    st.session_state.selected_vessel = vessel_options[selected_option]
                     st.rerun()
     
     # Save cache
