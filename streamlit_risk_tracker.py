@@ -307,7 +307,7 @@ if 'selected_vessel' not in st.session_state:
     st.session_state.selected_vessel = None
 
 if 'map_center' not in st.session_state:
-    st.session_state.map_center = {"lat": 1.27, "lon": 103.85, "zoom": 11}
+    st.session_state.map_center = {"lat": 1.5, "lon": 104.0, "zoom": 8}
 
 
 class SPMaritimeAPI:
@@ -404,7 +404,12 @@ class AISTracker:
     async def collect_data(self, duration: int = 30, api_key: str = "", bounding_box: List = None):
         """Collect AIS data from AISStream.io"""
         if bounding_box is None:
-            bounding_box = [[[1.15, 103.55], [1.50, 104.10]]]  # Full Singapore waters
+            # Extended coverage area for dark fleet tracking:
+            # Covers Malacca Strait, Singapore Strait, South China Sea approaches
+            # From northern Malacca Strait to Natuna Sea, including all transit routes
+            bounding_box = [
+                [[0.5, 102.0], [2.5, 106.0]]  # Large area: Malacca Strait to South China Sea
+            ]
         
         try:
             async with websockets.connect("wss://stream.aisstream.io/v0/stream") as ws:
@@ -626,7 +631,6 @@ def create_zone_layer(zones: List[Dict], color: List[int], layer_id: str) -> pdk
         zone_data.append({
             'polygon': zone['polygon'],
             'name': zone['name'],
-            'color': color
         })
     
     return pdk.Layer(
@@ -634,11 +638,11 @@ def create_zone_layer(zones: List[Dict], color: List[int], layer_id: str) -> pdk
         data=zone_data,
         id=layer_id,
         get_polygon='polygon',
-        get_fill_color='color',
-        get_line_color=[100, 100, 100, 100],
+        get_fill_color=color,
+        get_line_color=[100, 100, 100, 150],
         line_width_min_pixels=1,
-        pickable=True,
-        auto_highlight=True,
+        pickable=False,  # Disable picking to avoid tooltip interference
+        auto_highlight=False,
         extruded=False,
     )
 
@@ -665,8 +669,36 @@ except Exception:
         ais_api_key = st.text_input("AISStream API Key", type="password")
 
 # AIS Settings
-duration = st.sidebar.slider("AIS collection time (seconds)", 10, 120, 30)
+st.sidebar.header("📡 AIS Settings")
+duration = st.sidebar.slider("AIS collection time (seconds)", 10, 120, 60)
 enable_compliance = st.sidebar.checkbox("Enable S&P compliance screening", value=True)
+
+# Coverage Area Selection
+st.sidebar.subheader("Coverage Area")
+coverage_options = {
+    "Singapore Strait Only": [[[1.15, 103.55], [1.50, 104.10]]],
+    "Singapore + Approaches": [[[1.0, 103.3], [1.6, 104.3]]],
+    "Malacca to SCS (Dark Fleet)": [[[0.5, 102.0], [2.5, 106.0]]],
+    "Extended Malacca Strait": [[[-0.5, 100.0], [3.0, 106.0]]],
+    "Full Regional (Max Coverage)": [[[-1.0, 99.0], [4.0, 108.0]]]
+}
+selected_coverage = st.sidebar.selectbox(
+    "Select coverage area",
+    options=list(coverage_options.keys()),
+    index=2,  # Default to "Malacca to SCS (Dark Fleet)"
+    help="Larger areas = more vessels but longer collection time recommended"
+)
+coverage_bbox = coverage_options[selected_coverage]
+
+# Show coverage info
+coverage_info = {
+    "Singapore Strait Only": "~50km² - Singapore port and anchorages",
+    "Singapore + Approaches": "~150km² - Includes eastern/western approaches", 
+    "Malacca to SCS (Dark Fleet)": "~800km² - Main transit route for dark fleet",
+    "Extended Malacca Strait": "~2000km² - Full Malacca Strait coverage",
+    "Full Regional (Max Coverage)": "~4000km² - Maximum regional coverage"
+}
+st.sidebar.caption(coverage_info[selected_coverage])
 
 # Maritime Zones
 st.sidebar.header("🗺️ Maritime Zones")
@@ -691,24 +723,59 @@ if show_anchorages or show_channels or show_fairways:
 # Filters
 st.sidebar.header("🔍 Filters")
 
+# Quick Filter Presets
+st.sidebar.subheader("Quick Filters")
+quick_filter = st.sidebar.radio(
+    "Preset",
+    ["All Vessels", "Dark Fleet Focus", "Sanctioned Only", "Custom"],
+    index=0,
+    horizontal=True
+)
+
+# Set filter defaults based on quick filter
+if quick_filter == "Dark Fleet Focus":
+    default_compliance = ["Severe (🔴)", "Warning (🟡)"]
+    default_sanctions = ["UN Sanctions", "OFAC Sanctions", "Dark Activity"]
+    default_types = ["Tanker", "Cargo"]
+elif quick_filter == "Sanctioned Only":
+    default_compliance = ["Severe (🔴)"]
+    default_sanctions = ["UN Sanctions", "OFAC Sanctions"]
+    default_types = ["All"]
+else:
+    default_compliance = ["All"]
+    default_sanctions = ["All"]
+    default_types = ["All"]
+
 # Compliance filters
 st.sidebar.subheader("Compliance")
-compliance_options = ["Severe (🔴)", "Warning (🟡)", "Clear (✅)"]
-selected_compliance = st.sidebar.multiselect("Legal Status", compliance_options, default=compliance_options)
+compliance_options = ["All", "Severe (🔴)", "Warning (🟡)", "Clear (✅)"]
+selected_compliance = st.sidebar.multiselect(
+    "Legal Status", 
+    compliance_options, 
+    default=default_compliance if quick_filter != "Custom" else ["All"]
+)
 
-sanction_options = ["UN Sanctions", "OFAC Sanctions"]
-selected_sanctions = st.sidebar.multiselect("Sanctions", sanction_options)
+sanction_options = ["All", "UN Sanctions", "OFAC Sanctions", "Dark Activity"]
+selected_sanctions = st.sidebar.multiselect(
+    "Sanctions & Dark Activity", 
+    sanction_options, 
+    default=default_sanctions if quick_filter != "Custom" else ["All"]
+)
 
 # Vessel type filter
 st.sidebar.subheader("Vessel Type")
-vessel_types = ["Cargo", "Tanker", "Passenger", "Tug", "Fishing", 
+vessel_types = ["All", "Cargo", "Tanker", "Passenger", "Tug", "Fishing", 
                 "High Speed Craft", "Pilot", "SAR", "Port Tender", "Law Enforcement", "Other", "Unknown"]
-selected_types = st.sidebar.multiselect("Types", vessel_types, default=vessel_types)
+selected_types = st.sidebar.multiselect(
+    "Types", 
+    vessel_types, 
+    default=default_types if quick_filter != "Custom" else ["All"]
+)
 
 # Navigation status filter
 st.sidebar.subheader("Navigation Status")
-nav_status_options = list(NAV_STATUS_NAMES.values())
-selected_nav_statuses = st.sidebar.multiselect("Status", nav_status_options, default=nav_status_options)
+nav_status_options = ["All"] + list(NAV_STATUS_NAMES.values())
+selected_nav_statuses = st.sidebar.multiselect("Status", nav_status_options, default=["All"])
 
 # Static data filter
 show_static_only = st.sidebar.checkbox("Ships with static data only", value=False)
@@ -742,31 +809,34 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
     
     filtered_df = df.copy()
     
-    # Compliance filters
-    compliance_map = {
-        "Severe (🔴)": 2,
-        "Warning (🟡)": 1,
-        "Clear (✅)": 0
-    }
-    selected_levels = [compliance_map[c] for c in selected_compliance if c in compliance_map]
-    if selected_levels:
-        filtered_df = filtered_df[filtered_df['legal_overall'].isin(selected_levels)]
+    # Compliance filters (skip if "All" is selected)
+    if "All" not in selected_compliance and selected_compliance:
+        compliance_map = {
+            "Severe (🔴)": 2,
+            "Warning (🟡)": 1,
+            "Clear (✅)": 0
+        }
+        selected_levels = [compliance_map[c] for c in selected_compliance if c in compliance_map]
+        if selected_levels:
+            filtered_df = filtered_df[filtered_df['legal_overall'].isin(selected_levels)]
     
-    # Sanctions filter
-    if selected_sanctions:
+    # Sanctions & Dark Activity filter (skip if "All" is selected)
+    if "All" not in selected_sanctions and selected_sanctions:
         sanction_mask = pd.Series([False] * len(filtered_df), index=filtered_df.index)
         if "UN Sanctions" in selected_sanctions:
             sanction_mask = sanction_mask | (filtered_df['un_sanction'] == 2)
         if "OFAC Sanctions" in selected_sanctions:
             sanction_mask = sanction_mask | (filtered_df['ofac_sanction'] == 2)
+        if "Dark Activity" in selected_sanctions:
+            sanction_mask = sanction_mask | (filtered_df['dark_activity'] == 2)
         filtered_df = filtered_df[sanction_mask]
     
-    # Vessel type filter
-    if selected_types:
+    # Vessel type filter (skip if "All" is selected)
+    if "All" not in selected_types and selected_types:
         filtered_df = filtered_df[filtered_df['type_name'].isin(selected_types)]
     
-    # Navigation status filter
-    if selected_nav_statuses:
+    # Navigation status filter (skip if "All" is selected)
+    if "All" not in selected_nav_statuses and selected_nav_statuses:
         filtered_df = filtered_df[filtered_df['nav_status_name'].isin(selected_nav_statuses)]
     
     # Static data filter
@@ -796,10 +866,10 @@ def update_display():
     
     # Collect AIS data
     with status_placeholder:
-        with st.spinner(f'🔄 Collecting AIS data for {duration} seconds...'):
+        with st.spinner(f'🔄 Collecting AIS data for {duration} seconds ({selected_coverage})...'):
             tracker = AISTracker()
             if ais_api_key:
-                asyncio.run(tracker.collect_data(duration, ais_api_key))
+                asyncio.run(tracker.collect_data(duration, ais_api_key, coverage_bbox))
             else:
                 st.warning("⚠️ No AISStream API key provided. Please add it to secrets.")
                 return
@@ -850,9 +920,9 @@ def update_display():
             center_lon = st.session_state.map_center['lon']
             zoom = st.session_state.map_center['zoom']
     else:
-        center_lat = 1.27
-        center_lon = 103.85
-        zoom = 11
+        center_lat = 1.5
+        center_lon = 104.0
+        zoom = 8
     
     # Create map layers
     layers = []
@@ -927,7 +997,7 @@ def update_display():
         col1.subheader("📋 Vessel Details")
         if col2.button("🔄 Reset View"):
             st.session_state.selected_vessel = None
-            st.session_state.map_center = {"lat": 1.27, "lon": 103.85, "zoom": 11}
+            st.session_state.map_center = {"lat": 1.5, "lon": 104.0, "zoom": 8}
             st.rerun()
     
     with table_placeholder:
@@ -939,10 +1009,11 @@ def update_display():
         display_df['legal_display'] = display_df['legal_overall'].apply(format_compliance_value)
         display_df['un_display'] = display_df['un_sanction'].apply(format_compliance_value)
         display_df['ofac_display'] = display_df['ofac_sanction'].apply(format_compliance_value)
+        display_df['dark_display'] = display_df['dark_activity'].apply(lambda x: '🌑' if x == 2 else ('⚠️' if x == 1 else '✅'))
         
         # Select and rename columns for display
-        table_df = display_df[['name', 'imo', 'type_name', 'nav_status_name', 'speed', 'destination', 'has_static', 'legal_display', 'un_display', 'ofac_display']].copy()
-        table_df.columns = ['Name', 'IMO', 'Type', 'Nav Status', 'Speed', 'Destination', 'Has Static', 'Legal', 'UN', 'OFAC']
+        table_df = display_df[['name', 'imo', 'type_name', 'nav_status_name', 'speed', 'destination', 'has_static', 'legal_display', 'un_display', 'ofac_display', 'dark_display']].copy()
+        table_df.columns = ['Name', 'IMO', 'Type', 'Nav Status', 'Speed', 'Destination', 'Has Static', 'Legal', 'UN', 'OFAC', 'Dark']
         
         # Display the dataframe
         st.dataframe(
