@@ -267,56 +267,96 @@ def load_maritime_zones(excel_path: str) -> Dict[str, List[Dict]]:
 
 
 def create_vessel_polygon(lat: float, lon: float, heading: float, 
-                         length: float = 60, width: float = 16) -> List[List[float]]:
+                         length: float = 60, width: float = 16,
+                         zoom: float = 10) -> List[List[float]]:
     """
     Create a vessel-shaped polygon (rectangle) based on position, heading, and dimensions.
-    Uses vessel dimensions A, B, C, D if available, otherwise defaults.
+    
+    Args:
+        lat: Latitude of vessel center
+        lon: Longitude of vessel center  
+        heading: Heading in degrees (0 = North, 90 = East, clockwise per AIS standard)
+        length: Vessel length in meters (bow to stern)
+        width: Vessel width/beam in meters
+        zoom: Map zoom level (used for dynamic scaling)
+    
+    Returns:
+        List of [lon, lat] coordinates forming a closed polygon
     """
-    # Convert heading to radians (heading 0 = North)
-    heading_rad = math.radians(heading if heading and heading < 360 else 0)
+    # Validate position
+    if lat is None or lon is None:
+        return [[lon or 0, lat or 0]] * 5
     
-    # Default dimensions if not provided
-    if length <= 0:
-        length = 60
-    if width <= 0:
-        width = 16
+    # Validate and constrain heading (0-360)
+    if heading is None or heading < 0 or heading >= 360:
+        heading = 0
     
-    # Scale factor for geographic coordinates (approximate meters to degrees)
-    # At Singapore latitude (~1.3°N), 1 degree latitude ≈ 111,000 meters
-    # 1 degree longitude ≈ 111,000 * cos(1.3°) ≈ 110,700 meters
-    lat_scale = 1 / 111000
-    lon_scale = 1 / (111000 * math.cos(math.radians(lat)))
+    # AIS heading: 0° = North, 90° = East (clockwise)
+    # For rotation math, we need to convert to standard math convention
+    # where positive angles go counterclockwise from East
+    # heading_math = 90° - heading_ais (to convert North-based to East-based)
+    heading_rad = math.radians(90 - heading)
     
-    # Scale up for visibility (multiply by factor based on zoom level)
-    visibility_scale = 3  # Increase size for visibility
+    # Sanity check dimensions - reject unrealistic values
+    if length <= 0 or length > 500:  # No ship longer than 500m
+        length = 50  # Default small vessel
+    if width <= 0 or width > 80:  # No ship wider than 80m  
+        width = 10  # Default small vessel
     
-    half_length = (length * visibility_scale / 2) * lat_scale
-    half_width = (width * visibility_scale / 2) * lon_scale
+    # Geographic scale factors
+    # 1 degree of latitude ≈ 111,320 meters (constant)
+    # 1 degree of longitude ≈ 111,320 * cos(latitude) meters
+    meters_per_deg_lat = 111320.0
+    meters_per_deg_lon = 111320.0 * math.cos(math.radians(lat))
     
-    # Define corners relative to center (bow at top)
-    # Rectangle corners: front-left, front-right, back-right, back-left
-    corners = [
-        (-half_width, half_length),   # Front left
-        (half_width, half_length),    # Front right
-        (half_width, -half_length),   # Back right
-        (-half_width, -half_length),  # Back left
+    # Dynamic visibility scaling based on zoom level
+    # At zoom 8 (regional view): scale up significantly (10x) to see vessels
+    # At zoom 12 (port view): moderate scale (3x)
+    # At zoom 15+ (close up): near actual scale (1.2x)
+    # Formula: scale = base_scale * 2^(reference_zoom - current_zoom)
+    # This makes vessels appear consistent size on screen regardless of zoom
+    if zoom >= 16:
+        visibility_scale = 1.0  # True scale at very high zoom
+    elif zoom >= 14:
+        visibility_scale = 1.5
+    elif zoom >= 12:
+        visibility_scale = 3.0
+    elif zoom >= 10:
+        visibility_scale = 6.0
+    elif zoom >= 8:
+        visibility_scale = 12.0
+    else:
+        visibility_scale = 20.0  # Very zoomed out
+    
+    # Convert dimensions from meters to degrees
+    half_length_lat = (length * visibility_scale / 2.0) / meters_per_deg_lat
+    half_width_lon = (width * visibility_scale / 2.0) / meters_per_deg_lon
+    
+    # Define rectangle corners relative to center
+    # Before rotation: vessel points North (up in lat direction)
+    # Corners in (delta_lon, delta_lat) format
+    corners_local = [
+        (-half_width_lon, half_length_lat),   # Bow port (front left)
+        (half_width_lon, half_length_lat),    # Bow starboard (front right)
+        (half_width_lon, -half_length_lat),   # Stern starboard (back right)
+        (-half_width_lon, -half_length_lat),  # Stern port (back left)
     ]
     
-    # Rotate corners by heading
+    # Rotate corners around center point
     cos_h = math.cos(heading_rad)
     sin_h = math.sin(heading_rad)
     
     rotated_corners = []
-    for dx, dy in corners:
-        # Rotate point
-        new_dx = dx * cos_h - dy * sin_h
-        new_dy = dx * sin_h + dy * cos_h
+    for d_lon, d_lat in corners_local:
+        # Standard 2D rotation
+        rotated_lon = d_lon * cos_h - d_lat * sin_h
+        rotated_lat = d_lon * sin_h + d_lat * cos_h
         
         # Translate to actual position
-        new_lon = lon + new_dx / lon_scale * lat_scale
-        new_lat = lat + new_dy
+        final_lon = lon + rotated_lon
+        final_lat = lat + rotated_lat
         
-        rotated_corners.append([new_lon, new_lat])
+        rotated_corners.append([final_lon, final_lat])
     
     # Close the polygon
     rotated_corners.append(rotated_corners[0])
@@ -789,20 +829,31 @@ class AISTracker:
         return df
 
 
-def create_vessel_layer(df: pd.DataFrame) -> pdk.Layer:
-    """Create PyDeck polygon layer for vessel rectangles"""
+def create_vessel_layer(df: pd.DataFrame, zoom: float = 10) -> pdk.Layer:
+    """Create PyDeck polygon layer for vessel rectangles
+    
+    Args:
+        df: DataFrame with vessel data
+        zoom: Current map zoom level for dynamic scaling
+    """
     if len(df) == 0:
         return None
     
     vessel_polygons = []
     
     for _, row in df.iterrows():
+        # Use actual dimensions if available, otherwise reasonable defaults
+        # Default 50m x 10m is a small cargo/fishing vessel size
+        vessel_length = row['length'] if row['length'] > 0 and row['length'] < 500 else 50
+        vessel_width = row['width'] if row['width'] > 0 and row['width'] < 80 else 10
+        
         polygon = create_vessel_polygon(
             lat=row['latitude'],
             lon=row['longitude'],
             heading=row['heading'],
-            length=row['length'] if row['length'] > 0 else 60,
-            width=row['width'] if row['width'] > 0 else 16
+            length=vessel_length,
+            width=vessel_width,
+            zoom=zoom
         )
         
         # Build tooltip text for vessel
@@ -816,7 +867,23 @@ def create_vessel_layer(df: pd.DataFrame) -> pdk.Layer:
         else:
             legal_emoji = '❓'  # Unknown/not checked
         
-        tooltip_text = f"<b>{row['name']}</b><br/>IMO: {row['imo']}<br/>MMSI: {row['mmsi']}<br/>Type: {row['type_name']}<br/>Status: {row['nav_status_name']}<br/>Speed: {row['speed']:.1f} kts<br/>Legal: {legal_emoji}<br/>Destination: {row['destination']}"
+        # Show dimensions (actual if available, or "default")
+        dim_text = f"{vessel_length:.0f}m x {vessel_width:.0f}m"
+        if row['length'] <= 0:
+            dim_text += " (est)"
+        
+        tooltip_text = (
+            f"<b>{row['name']}</b><br/>"
+            f"IMO: {row['imo']}<br/>"
+            f"MMSI: {row['mmsi']}<br/>"
+            f"Type: {row['type_name']}<br/>"
+            f"Size: {dim_text}<br/>"
+            f"Heading: {row['heading']:.0f}°<br/>"
+            f"Speed: {row['speed']:.1f} kts<br/>"
+            f"Status: {row['nav_status_name']}<br/>"
+            f"Legal: {legal_emoji}<br/>"
+            f"Dest: {row['destination']}"
+        )
         
         vessel_polygons.append({
             'polygon': polygon,
@@ -923,6 +990,35 @@ st.sidebar.header("🗺️ Maritime Zones")
 show_anchorages = st.sidebar.checkbox("Show Anchorages", value=False)
 show_channels = st.sidebar.checkbox("Show Channels", value=False)
 show_fairways = st.sidebar.checkbox("Show Fairways", value=False)
+
+# Map Zoom Control
+st.sidebar.header("🔍 Map View")
+zoom_level = st.sidebar.slider(
+    "Zoom Level",
+    min_value=6,
+    max_value=18,
+    value=st.session_state.get('user_zoom', 10),
+    help="Higher zoom = closer view, vessels at actual scale. Lower zoom = wider view, vessels enlarged for visibility."
+)
+st.session_state.user_zoom = zoom_level
+
+# Show scale info
+scale_info = {
+    6: "20x scale (regional)",
+    7: "20x scale (regional)",
+    8: "12x scale (wide area)",
+    9: "12x scale (wide area)",
+    10: "6x scale (port area)",
+    11: "6x scale (port area)",
+    12: "3x scale (harbor)",
+    13: "3x scale (harbor)",
+    14: "1.5x scale (close)",
+    15: "1.5x scale (close)",
+    16: "1:1 actual scale",
+    17: "1:1 actual scale",
+    18: "1:1 actual scale"
+}
+st.sidebar.caption(f"Vessel scale: {scale_info.get(zoom_level, '1:1')}")
 
 # Load maritime zones if any are enabled
 maritime_zones = {"Anchorages": [], "Channels": [], "Fairways": []}
@@ -1159,20 +1255,23 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
         cols[7].metric("📐 Real Dims", int(df['has_dimensions'].sum()))
     
     # Determine map view
+    # Use user-selected zoom level from sidebar, or default
+    user_zoom = st.session_state.get('user_zoom', 10)
+    
     if st.session_state.selected_vessel:
         vessel = df[df['mmsi'] == st.session_state.selected_vessel]
         if len(vessel) > 0:
             center_lat = vessel.iloc[0]['latitude']
             center_lon = vessel.iloc[0]['longitude']
-            zoom = 15
+            zoom = max(user_zoom, 14)  # At least zoom 14 when viewing a specific vessel
         else:
             center_lat = st.session_state.map_center['lat']
             center_lon = st.session_state.map_center['lon']
-            zoom = st.session_state.map_center['zoom']
+            zoom = user_zoom
     else:
         center_lat = 1.5
         center_lon = 104.0
-        zoom = 8
+        zoom = user_zoom
     
     # Create map layers
     layers = []
@@ -1205,8 +1304,8 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
         if fairway_layer:
             layers.append(fairway_layer)
     
-    # Add vessel layer (on top)
-    vessel_layer = create_vessel_layer(df)
+    # Add vessel layer (on top) with dynamic scaling based on zoom
+    vessel_layer = create_vessel_layer(df, zoom=zoom)
     if vessel_layer:
         layers.append(vessel_layer)
     
@@ -1339,22 +1438,62 @@ def update_display():
 # Control buttons
 col1, col2, col3 = st.columns([1, 1, 4])
 if col1.button("🔄 Refresh Now", type="primary"):
+    st.session_state.last_refresh_time = time.time()
     update_display()
+    st.session_state.data_loaded = True
 if col2.button("📦 View Cached"):
     display_cached_data()
+    st.session_state.data_loaded = True
 
 # Auto-refresh option
-auto_refresh = st.sidebar.checkbox("Auto-refresh every 60s", value=False)
+st.sidebar.markdown("---")
+st.sidebar.markdown("### ⏱️ Auto-Refresh")
+auto_refresh = st.sidebar.checkbox("Enable auto-refresh", value=False)
+
 if auto_refresh:
-    update_display()
-    time.sleep(60)
-    st.rerun()
+    refresh_interval = st.sidebar.selectbox(
+        "Refresh interval",
+        options=[30, 60, 120, 300, 600],
+        format_func=lambda x: f"{x}s" if x < 60 else f"{x//60} min",
+        index=1
+    )
+    
+    # Initialize last refresh time if not set
+    if 'last_refresh_time' not in st.session_state:
+        st.session_state.last_refresh_time = 0
+    
+    # Calculate elapsed time
+    elapsed = time.time() - st.session_state.last_refresh_time
+    
+    if elapsed >= refresh_interval:
+        # Time to refresh
+        st.session_state.last_refresh_time = time.time()
+        update_display()
+        st.session_state.data_loaded = True
+    else:
+        # Show countdown and cached data
+        remaining = int(refresh_interval - elapsed)
+        mins, secs = divmod(remaining, 60)
+        if mins > 0:
+            countdown_text = f"{mins}m {secs}s"
+        else:
+            countdown_text = f"{secs}s"
+        
+        st.sidebar.info(f"⏱️ Next refresh in **{countdown_text}**")
+        
+        # Display cached data while waiting
+        if st.session_state.get('data_loaded'):
+            display_cached_data()
+        
+        # Wait 1 second then rerun to update countdown
+        time.sleep(1)
+        st.rerun()
 
 # Show cached data on page load if available
 if 'data_loaded' not in st.session_state:
     st.session_state.data_loaded = False
 
-if not st.session_state.data_loaded:
+if not st.session_state.data_loaded and not auto_refresh:
     # Check if we have cached data to display
     if 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
         cached_count = len([k for k in st.session_state.vessel_positions.keys() if k != '_last_update'])
