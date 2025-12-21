@@ -174,6 +174,117 @@ def get_vessel_type_category(type_code: int) -> str:
         return "Other"
 
 
+def estimate_vessel_dimensions(type_code: int) -> Tuple[float, float]:
+    """
+    Estimate vessel dimensions (length, width) based on AIS vessel type code.
+    Returns (length_meters, width_meters) typical for each vessel type.
+    
+    These are approximate averages for visualization purposes.
+    """
+    if type_code is None:
+        return (50, 10)  # Default small vessel
+    
+    # Cargo vessels (70-79)
+    if 70 <= type_code <= 79:
+        # Sub-categories within cargo
+        if type_code == 70:  # Cargo, all ships of this type
+            return (120, 18)
+        elif type_code == 71:  # Cargo, Hazardous category A
+            return (150, 22)
+        elif type_code == 72:  # Cargo, Hazardous category B
+            return (140, 20)
+        elif type_code == 73:  # Cargo, Hazardous category C
+            return (130, 19)
+        elif type_code == 74:  # Cargo, Hazardous category D
+            return (120, 18)
+        else:  # 75-79: Reserved/other cargo
+            return (100, 16)
+    
+    # Tankers (80-89)
+    elif 80 <= type_code <= 89:
+        if type_code == 80:  # Tanker, all ships of this type
+            return (180, 28)
+        elif type_code == 81:  # Tanker, Hazardous category A
+            return (250, 40)  # VLCC size
+        elif type_code == 82:  # Tanker, Hazardous category B
+            return (200, 32)
+        elif type_code == 83:  # Tanker, Hazardous category C
+            return (170, 26)
+        elif type_code == 84:  # Tanker, Hazardous category D
+            return (150, 24)
+        else:  # 85-89: Reserved/other tanker
+            return (140, 22)
+    
+    # Passenger vessels (60-69)
+    elif 60 <= type_code <= 69:
+        if type_code == 60:  # Passenger, all ships
+            return (200, 28)
+        elif type_code == 61:  # Passenger, Hazardous category A
+            return (300, 36)  # Large cruise ship
+        elif type_code == 62:  # Passenger, Hazardous category B
+            return (250, 32)
+        elif type_code == 63:  # Passenger, Hazardous category C
+            return (180, 25)
+        elif type_code == 64:  # Passenger, Hazardous category D
+            return (150, 22)
+        elif type_code == 69:  # Passenger, No additional information
+            return (100, 16)  # Ferry size
+        else:
+            return (120, 20)
+    
+    # Tugs (31, 32, 52)
+    elif type_code in [31, 32, 52]:
+        return (30, 10)
+    
+    # Fishing (30)
+    elif type_code == 30:
+        return (25, 7)
+    
+    # High Speed Craft (40-49)
+    elif 40 <= type_code <= 49:
+        return (40, 10)
+    
+    # Pilot vessel (50)
+    elif type_code == 50:
+        return (20, 6)
+    
+    # SAR (51)
+    elif type_code == 51:
+        return (30, 8)
+    
+    # Port Tender (53)
+    elif type_code == 53:
+        return (25, 7)
+    
+    # Law Enforcement (55)
+    elif type_code == 55:
+        return (35, 8)
+    
+    # Dredger (33)
+    elif type_code == 33:
+        return (80, 18)
+    
+    # Military (35)
+    elif type_code == 35:
+        return (120, 15)
+    
+    # Sailing (36)
+    elif type_code == 36:
+        return (15, 5)
+    
+    # Pleasure craft (37)
+    elif type_code == 37:
+        return (20, 6)
+    
+    # Other (90-99)
+    elif 90 <= type_code <= 99:
+        return (60, 12)
+    
+    # Default
+    else:
+        return (50, 10)
+
+
 def load_cache() -> Tuple[Dict, Dict, Dict, Dict]:
     """Load cached ship, risk, MMSI-to-IMO, and vessel position data from disk"""
     ship_cache = {}
@@ -927,13 +1038,20 @@ class AISTracker:
             else:
                 heading = true_heading
             
-            # Get dimensions
+            # Get dimensions from static data
             dim_a = static.get('dimension_a', 0) or 0
             dim_b = static.get('dimension_b', 0) or 0
             dim_c = static.get('dimension_c', 0) or 0
             dim_d = static.get('dimension_d', 0) or 0
             length = dim_a + dim_b
             width = dim_c + dim_d
+            
+            # If no dimensions available, estimate based on vessel type
+            has_real_dimensions = (length > 0 and width > 0)
+            if not has_real_dimensions:
+                est_length, est_width = estimate_vessel_dimensions(ship_type)
+                length = est_length
+                width = est_width
             
             data.append({
                 'mmsi': mmsi,
@@ -954,7 +1072,7 @@ class AISTracker:
                 'dim_b': dim_b,
                 'dim_c': dim_c,
                 'dim_d': dim_d,
-                'has_dimensions': (dim_a > 0 or dim_b > 0),
+                'has_dimensions': has_real_dimensions,  # True only if real AIS dimensions
                 'destination': (static.get('destination') or 'Unknown').strip(),
                 'call_sign': static.get('call_sign', ''),
                 'has_static': bool(static.get('name')),
@@ -1622,33 +1740,39 @@ def display_cached_data():
     df = apply_filters(df)
     
     if df.empty:
-        st.info("ℹ️ No ships match the selected filters.")
+        st.warning("⚠️ No vessels match the current filters. Adjust filters to see vessels.")
+        # Still show empty map with zones
+        display_vessel_data(df, last_update, is_cached=True, show_empty_message=True)
         return
     
     # Display the data (same as update_display)
     display_vessel_data(df, last_update, is_cached=True)
 
 
-def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = False):
+def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = False, show_empty_message: bool = False):
     """Common function to display vessel data on map and table"""
     
     # Display statistics
     with stats_placeholder:
         cols = st.columns(8)
         cols[0].metric("🚢 Total Ships", len(df))
-        cols[1].metric("⚡ Moving", len(df[df['speed'] > 1]))
-        cols[2].metric("📡 Has Static", int(df['has_static'].sum()))
+        cols[1].metric("⚡ Moving", len(df[df['speed'] > 1]) if len(df) > 0 else 0)
+        cols[2].metric("📡 Has Static", int(df['has_static'].sum()) if len(df) > 0 else 0)
         
-        severe_count = len(df[df['legal_overall'] == 2])
-        warning_count = len(df[df['legal_overall'] == 1])
-        clear_count = len(df[df['legal_overall'] == 0])
-        unknown_count = len(df[df['legal_overall'] < 0])  # -1 = not checked
+        if len(df) > 0:
+            severe_count = len(df[df['legal_overall'] == 2])
+            warning_count = len(df[df['legal_overall'] == 1])
+            clear_count = len(df[df['legal_overall'] == 0])
+            unknown_count = len(df[df['legal_overall'] < 0])
+            real_dims = int(df['has_dimensions'].sum())
+        else:
+            severe_count = warning_count = clear_count = unknown_count = real_dims = 0
         
         cols[3].metric("🔴 Severe", severe_count)
         cols[4].metric("🟡 Caution", warning_count)
         cols[5].metric("✅ Clear", clear_count)
         cols[6].metric("❓ Unknown", unknown_count)
-        cols[7].metric("📐 Real Dims", int(df['has_dimensions'].sum()))
+        cols[7].metric("📐 Real Dims", real_dims)
     
     # Determine map view
     # Use user-selected zoom level from sidebar, or default
@@ -1741,49 +1865,52 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
             st.rerun()
     
     with table_placeholder:
-        # Sort by legal_overall (most severe first) then by speed
-        display_df = df.sort_values(['legal_overall', 'speed'], ascending=[False, False]).copy()
-        
-        # Format boolean/status columns with emojis
-        display_df['has_static_display'] = display_df['has_static'].map({True: '✅', False: '❌'})
-        display_df['legal_display'] = display_df['legal_overall'].apply(format_compliance_value)
-        display_df['un_display'] = display_df['un_sanction'].apply(format_compliance_value)
-        display_df['ofac_display'] = display_df['ofac_sanction'].apply(format_compliance_value)
-        display_df['dark_display'] = display_df['dark_activity'].apply(format_compliance_value)
-        display_df['speed_fmt'] = display_df['speed'].apply(lambda x: f"{x:.1f}")
-        
-        # Select and rename columns for display - IMO first, then MMSI
-        table_df = display_df[['name', 'imo', 'mmsi', 'type_name', 'nav_status_name', 'speed_fmt', 'destination', 'has_static_display', 'legal_display', 'un_display', 'ofac_display', 'dark_display']].copy()
-        table_df.columns = ['Name', 'IMO', 'MMSI', 'Type', 'Nav Status', 'Speed', 'Destination', 'Static', 'Legal', 'UN', 'OFAC', 'Dark']
-        
-        # Display the dataframe with selection
-        selected_rows = st.dataframe(
-            table_df,
-            use_container_width=True,
-            height=500,
-            hide_index=True,
-            on_select="rerun",
-            selection_mode="single-row"
-        )
-        
-        # Handle row selection for map view
-        if selected_rows and selected_rows.selection and selected_rows.selection.rows:
-            selected_idx = selected_rows.selection.rows[0]
-            selected_mmsi = display_df.iloc[selected_idx]['mmsi']
-            selected_imo = display_df.iloc[selected_idx]['imo']
+        if len(df) == 0:
+            st.info("No vessels to display. Adjust filters or refresh data.")
+        else:
+            # Sort by legal_overall (most severe first) then by speed
+            display_df = df.sort_values(['legal_overall', 'speed'], ascending=[False, False]).copy()
             
-            col1, col2, col3 = st.columns([3, 1, 1])
-            col1.info(f"Selected: **{table_df.iloc[selected_idx]['Name']}** (IMO: {table_df.iloc[selected_idx]['IMO']}, MMSI: {table_df.iloc[selected_idx]['MMSI']})")
-            if col2.button("🗺️ View on Map"):
-                st.session_state.selected_vessel = selected_mmsi
-                st.rerun()
-            if col3.button("📋 View Details"):
-                st.session_state.show_details_imo = selected_imo
-                st.session_state.show_details_name = table_df.iloc[selected_idx]['Name']
-        
-        # Show vessel details panel if requested
-        if st.session_state.get('show_details_imo') and sp_username and sp_password:
-            show_vessel_details_panel(st.session_state.show_details_imo, st.session_state.get('show_details_name', ''))
+            # Format boolean/status columns with emojis
+            display_df['has_static_display'] = display_df['has_static'].map({True: '✅', False: '❌'})
+            display_df['legal_display'] = display_df['legal_overall'].apply(format_compliance_value)
+            display_df['un_display'] = display_df['un_sanction'].apply(format_compliance_value)
+            display_df['ofac_display'] = display_df['ofac_sanction'].apply(format_compliance_value)
+            display_df['dark_display'] = display_df['dark_activity'].apply(format_compliance_value)
+            display_df['speed_fmt'] = display_df['speed'].apply(lambda x: f"{x:.1f}")
+            
+            # Select and rename columns for display - IMO first, then MMSI
+            table_df = display_df[['name', 'imo', 'mmsi', 'type_name', 'nav_status_name', 'speed_fmt', 'destination', 'has_static_display', 'legal_display', 'un_display', 'ofac_display', 'dark_display']].copy()
+            table_df.columns = ['Name', 'IMO', 'MMSI', 'Type', 'Nav Status', 'Speed', 'Destination', 'Static', 'Legal', 'UN', 'OFAC', 'Dark']
+            
+            # Display the dataframe with selection
+            selected_rows = st.dataframe(
+                table_df,
+                use_container_width=True,
+                height=500,
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row"
+            )
+            
+            # Handle row selection for map view
+            if selected_rows and selected_rows.selection and selected_rows.selection.rows:
+                selected_idx = selected_rows.selection.rows[0]
+                selected_mmsi = display_df.iloc[selected_idx]['mmsi']
+                selected_imo = display_df.iloc[selected_idx]['imo']
+                
+                col1, col2, col3 = st.columns([3, 1, 1])
+                col1.info(f"Selected: **{table_df.iloc[selected_idx]['Name']}** (IMO: {table_df.iloc[selected_idx]['IMO']}, MMSI: {table_df.iloc[selected_idx]['MMSI']})")
+                if col2.button("🗺️ View on Map"):
+                    st.session_state.selected_vessel = selected_mmsi
+                    st.rerun()
+                if col3.button("📋 View Details"):
+                    st.session_state.show_details_imo = selected_imo
+                    st.session_state.show_details_name = table_df.iloc[selected_idx]['Name']
+            
+            # Show vessel details panel if requested
+            if st.session_state.get('show_details_imo') and sp_username and sp_password:
+                show_vessel_details_panel(st.session_state.show_details_imo, st.session_state.get('show_details_name', ''))
     
     # Display timestamp
     cache_indicator = " 📦 (cached)" if is_cached else ""
