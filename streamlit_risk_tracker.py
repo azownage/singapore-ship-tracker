@@ -368,18 +368,19 @@ def create_vessel_polygon(lat: float, lon: float, heading: float,
     offset_fwd_deg = offset_forward / meters_per_deg_lat
     offset_port_deg = offset_port / meters_per_deg_lon
     
-    # Bow triangle point (20% of length for the pointed bow)
-    bow_point = half_length * 1.2
-    bow_start = half_length * 0.6  # Where the triangle starts
+    # Bow triangle is WITHIN the vessel length
+    # Triangle takes up front 25% of the vessel
+    bow_point = half_length                # Bow tip at the front edge (within total length)
+    bow_start = half_length * 0.5          # Rectangle ends, triangle starts at 50% forward
     
     # Define ship shape relative to center, pointing NORTH (up = +lat)
     # Ship outline: stern (flat) -> port side -> bow point -> starboard side -> back to stern
-    # Using 6 points for a pointed bow shape
+    # Total length from stern (-half_length) to bow (half_length) = vessel length
     corners_local = [
         (-half_width, -half_length),      # Stern port
-        (-half_width, bow_start),          # Port side at bow start
-        (0, bow_point),                    # Bow point (triangle tip)
-        (half_width, bow_start),           # Starboard side at bow start
+        (-half_width, bow_start),          # Port side where triangle starts
+        (0, bow_point),                    # Bow point (triangle tip) - at front edge
+        (half_width, bow_start),           # Starboard side where triangle starts
         (half_width, -half_length),        # Stern starboard
         (-half_width, -half_length),       # Close polygon back to stern port
     ]
