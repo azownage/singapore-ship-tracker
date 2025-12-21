@@ -268,98 +268,133 @@ def load_maritime_zones(excel_path: str) -> Dict[str, List[Dict]]:
 
 def create_vessel_polygon(lat: float, lon: float, heading: float, 
                          length: float = 60, width: float = 16,
-                         zoom: float = 10) -> List[List[float]]:
+                         zoom: float = 10,
+                         dim_a: float = 0, dim_b: float = 0,
+                         dim_c: float = 0, dim_d: float = 0) -> List[List[float]]:
     """
-    Create a vessel-shaped polygon (rectangle) based on position, heading, and dimensions.
+    Create a vessel-shaped polygon with pointed bow based on position, heading, and dimensions.
+    
+    AIS position is at the antenna location, not vessel center.
+    Dimensions A, B, C, D define antenna position relative to vessel:
+    - A: Distance from antenna to bow (forward)
+    - B: Distance from antenna to stern (backward)  
+    - C: Distance from antenna to port (left)
+    - D: Distance from antenna to starboard (right)
     
     Args:
-        lat: Latitude of vessel center
-        lon: Longitude of vessel center  
+        lat: Latitude of antenna position (AIS reported)
+        lon: Longitude of antenna position (AIS reported)
         heading: Heading in degrees (0 = North, 90 = East, clockwise per AIS standard)
-        length: Vessel length in meters (bow to stern)
-        width: Vessel width/beam in meters
+        length: Vessel length in meters (bow to stern) = A + B
+        width: Vessel width/beam in meters = C + D
         zoom: Map zoom level (used for dynamic scaling)
+        dim_a, dim_b, dim_c, dim_d: AIS dimension fields
     
     Returns:
-        List of [lon, lat] coordinates forming a closed polygon
+        List of [lon, lat] coordinates forming a closed polygon with pointed bow
     """
     # Validate position
     if lat is None or lon is None:
-        return [[lon or 0, lat or 0]] * 5
+        return [[lon or 0, lat or 0]] * 7
     
     # Validate and constrain heading (0-360)
     if heading is None or heading < 0 or heading >= 360:
         heading = 0
     
-    # AIS heading: 0° = North, 90° = East (clockwise)
-    # For rotation math, we need to convert to standard math convention
-    # where positive angles go counterclockwise from East
-    # heading_math = 90° - heading_ais (to convert North-based to East-based)
-    heading_rad = math.radians(90 - heading)
+    # AIS heading: 0° = North, 90° = East (clockwise from North)
+    # Math convention: 0° = East, counterclockwise
+    # To rotate a shape that points North (up/+Y) to point in AIS heading direction:
+    # We rotate clockwise by the heading angle
+    # In standard math rotation (counterclockwise positive), this is -heading
+    heading_rad = math.radians(-heading)
     
     # Sanity check dimensions - reject unrealistic values
-    if length <= 0 or length > 500:  # No ship longer than 500m
-        length = 50  # Default small vessel
-    if width <= 0 or width > 80:  # No ship wider than 80m  
-        width = 10  # Default small vessel
+    if length <= 0 or length > 500:
+        length = 50
+    if width <= 0 or width > 80:
+        width = 10
     
     # Geographic scale factors
-    # 1 degree of latitude ≈ 111,320 meters (constant)
-    # 1 degree of longitude ≈ 111,320 * cos(latitude) meters
     meters_per_deg_lat = 111320.0
     meters_per_deg_lon = 111320.0 * math.cos(math.radians(lat))
     
-    # Dynamic visibility scaling based on zoom level
-    # At zoom 8 (regional view): scale up significantly (10x) to see vessels
-    # At zoom 12 (port view): moderate scale (3x)
-    # At zoom 15+ (close up): near actual scale (1.2x)
-    # Formula: scale = base_scale * 2^(reference_zoom - current_zoom)
-    # This makes vessels appear consistent size on screen regardless of zoom
+    # Visibility scaling based on zoom (only used for polygon layer at high zoom)
     if zoom >= 16:
-        visibility_scale = 1.0  # True scale at very high zoom
+        visibility_scale = 1.0
     elif zoom >= 14:
-        visibility_scale = 1.5
+        visibility_scale = 2.0
     elif zoom >= 12:
-        visibility_scale = 3.0
-    elif zoom >= 10:
-        visibility_scale = 6.0
-    elif zoom >= 8:
-        visibility_scale = 12.0
+        visibility_scale = 4.0
     else:
-        visibility_scale = 20.0  # Very zoomed out
+        visibility_scale = 6.0
     
-    # Convert dimensions from meters to degrees
-    half_length_lat = (length * visibility_scale / 2.0) / meters_per_deg_lat
-    half_width_lon = (width * visibility_scale / 2.0) / meters_per_deg_lon
+    # Apply scale to dimensions
+    scaled_length = length * visibility_scale
+    scaled_width = width * visibility_scale
     
-    # Define rectangle corners relative to center
-    # Before rotation: vessel points North (up in lat direction)
-    # Corners in (delta_lon, delta_lat) format
+    # Calculate antenna offset from vessel center
+    # If A, B, C, D are provided, use them; otherwise assume antenna at center
+    if dim_a > 0 or dim_b > 0:
+        # Offset from antenna to center along length axis
+        # Positive = antenna is aft of center (move bow forward)
+        offset_forward = ((dim_a - dim_b) / 2.0) * visibility_scale
+    else:
+        offset_forward = 0
+    
+    if dim_c > 0 or dim_d > 0:
+        # Offset from antenna to center along width axis
+        # Positive = antenna is to starboard of center (move port side left)
+        offset_port = ((dim_c - dim_d) / 2.0) * visibility_scale
+    else:
+        offset_port = 0
+    
+    # Convert to degrees
+    half_length = scaled_length / 2.0 / meters_per_deg_lat
+    half_width = scaled_width / 2.0 / meters_per_deg_lon
+    offset_fwd_deg = offset_forward / meters_per_deg_lat
+    offset_port_deg = offset_port / meters_per_deg_lon
+    
+    # Bow triangle point (20% of length for the pointed bow)
+    bow_point = half_length * 1.2
+    bow_start = half_length * 0.6  # Where the triangle starts
+    
+    # Define ship shape relative to center, pointing NORTH (up = +lat)
+    # Ship outline: stern (flat) -> port side -> bow point -> starboard side -> back to stern
+    # Using 6 points for a pointed bow shape
     corners_local = [
-        (-half_width_lon, half_length_lat),   # Bow port (front left)
-        (half_width_lon, half_length_lat),    # Bow starboard (front right)
-        (half_width_lon, -half_length_lat),   # Stern starboard (back right)
-        (-half_width_lon, -half_length_lat),  # Stern port (back left)
+        (-half_width, -half_length),      # Stern port
+        (-half_width, bow_start),          # Port side at bow start
+        (0, bow_point),                    # Bow point (triangle tip)
+        (half_width, bow_start),           # Starboard side at bow start
+        (half_width, -half_length),        # Stern starboard
+        (-half_width, -half_length),       # Close polygon back to stern port
     ]
     
-    # Rotate corners around center point
+    # Rotate and translate corners
     cos_h = math.cos(heading_rad)
     sin_h = math.sin(heading_rad)
     
     rotated_corners = []
     for d_lon, d_lat in corners_local:
-        # Standard 2D rotation
-        rotated_lon = d_lon * cos_h - d_lat * sin_h
-        rotated_lat = d_lon * sin_h + d_lat * cos_h
+        # Apply antenna offset (in local coordinates before rotation)
+        d_lat_offset = d_lat + offset_fwd_deg * meters_per_deg_lat / meters_per_deg_lat
+        d_lon_offset = d_lon - offset_port_deg * meters_per_deg_lon / meters_per_deg_lon
+        
+        # Actually the offset should be applied differently - let me recalculate
+        # The offset is in the ship's frame, so apply before rotation
+        d_lat_adj = d_lat - offset_fwd_deg * (meters_per_deg_lat / meters_per_deg_lat)  # This simplifies
+        d_lon_adj = d_lon + offset_port_deg * (meters_per_deg_lon / meters_per_deg_lon)
+        
+        # Standard 2D rotation (x' = x*cos - y*sin, y' = x*sin + y*cos)
+        # Here x = lon direction, y = lat direction
+        rotated_lon = d_lon_adj * cos_h - d_lat_adj * sin_h
+        rotated_lat = d_lon_adj * sin_h + d_lat_adj * cos_h
         
         # Translate to actual position
         final_lon = lon + rotated_lon
         final_lat = lat + rotated_lat
         
         rotated_corners.append([final_lon, final_lat])
-    
-    # Close the polygon
-    rotated_corners.append(rotated_corners[0])
     
     return rotated_corners
 
@@ -382,7 +417,7 @@ if 'show_details_imo' not in st.session_state:
     st.session_state.show_details_name = None
 
 if 'map_center' not in st.session_state:
-    st.session_state.map_center = {"lat": 1.5, "lon": 104.0, "zoom": 8}
+    st.session_state.map_center = {"lat": 1.28, "lon": 103.85, "zoom": 10}
 
 
 class SPShipsAPI:
@@ -597,6 +632,7 @@ class SPMaritimeAPI:
         try:
             # Batch API call (max 100 per request)
             batches = [uncached_imos[i:i+100] for i in range(0, len(uncached_imos), 100)]
+            received_imos = set()
             
             for batch in batches:
                 imo_string = ','.join(batch)
@@ -620,6 +656,7 @@ class SPMaritimeAPI:
                             if not imo:
                                 continue
                             
+                            received_imos.add(imo)
                             cache[imo] = {
                                 'legal_overall': ship.get('legalOverall', 0),
                                 'ship_bes_sanction': ship.get('shipBESSanctionList', 0),
@@ -659,9 +696,22 @@ class SPMaritimeAPI:
                 
                 time.sleep(0.5)  # Rate limiting
             
+            # For IMOs that were queried but not returned by API, mark as checked with default clear values
+            # This prevents showing ❓ for vessels not in the compliance database
+            for imo in uncached_imos:
+                if imo not in received_imos:
+                    cache[imo] = {
+                        'legal_overall': 0,
+                        'ship_un_sanction': 0,
+                        'ship_ofac_sanction': 0,
+                        'dark_activity': 0,
+                        'checked_but_not_found': True,  # Flag to indicate queried but not in database
+                        'cached_at': datetime.now(SGT).isoformat()
+                    }
+            
             st.session_state.risk_data_cache = cache
             save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache, st.session_state.get('mmsi_to_imo_cache', {}))
-            st.success(f"✅ Cached compliance data for {len(uncached_imos)} vessels")
+            st.success(f"✅ Cached compliance data for {len(received_imos)}/{len(uncached_imos)} vessels (others not in database)")
                 
         except Exception as e:
             st.error(f"⚠️ S&P API error: {str(e)}")
@@ -783,7 +833,7 @@ class AISTracker:
         }
     
     def process_static(self, ais_message: Dict):
-        """Process AIS static data report"""
+        """Process AIS static data report - merges with cached data to preserve dimensions"""
         static_data = ais_message.get('Message', {}).get('ShipStaticData', {})
         
         mmsi = static_data.get('UserID')
@@ -798,18 +848,33 @@ class AISTracker:
         dim_c = dimension.get('C', 0) or 0
         dim_d = dimension.get('D', 0) or 0
         
+        # Get existing cached data for this vessel (to preserve dimensions if new data has 0s)
+        existing_cached = st.session_state.ship_static_cache.get(str(mmsi), {})
+        
+        # If new dimensions are 0 but we have cached dimensions, keep the cached ones
+        if dim_a == 0 and dim_b == 0:
+            dim_a = existing_cached.get('dimension_a', 0) or 0
+            dim_b = existing_cached.get('dimension_b', 0) or 0
+        if dim_c == 0 and dim_d == 0:
+            dim_c = existing_cached.get('dimension_c', 0) or 0
+            dim_d = existing_cached.get('dimension_d', 0) or 0
+        
+        # If new IMO is 0 but we have cached IMO, keep the cached one
+        if imo == '0' and existing_cached.get('imo', '0') != '0':
+            imo = existing_cached.get('imo')
+        
         static_info = {
-            'name': static_data.get('Name', 'Unknown'),
+            'name': static_data.get('Name', 'Unknown') or existing_cached.get('name', 'Unknown'),
             'imo': imo,
-            'type': static_data.get('Type'),
+            'type': static_data.get('Type') or existing_cached.get('type'),
             'dimension_a': dim_a,
             'dimension_b': dim_b,
             'dimension_c': dim_c,
             'dimension_d': dim_d,
             'length': dim_a + dim_b,
             'width': dim_c + dim_d,
-            'destination': static_data.get('Destination', 'Unknown'),
-            'call_sign': static_data.get('CallSign', ''),
+            'destination': static_data.get('Destination', 'Unknown') or existing_cached.get('destination', 'Unknown'),
+            'call_sign': static_data.get('CallSign', '') or existing_cached.get('call_sign', ''),
             'cached_at': datetime.now(SGT).isoformat()
         }
         
@@ -870,6 +935,10 @@ class AISTracker:
                 'type_name': get_vessel_type_category(ship_type),
                 'length': length,
                 'width': width,
+                'dim_a': dim_a,
+                'dim_b': dim_b,
+                'dim_c': dim_c,
+                'dim_d': dim_d,
                 'has_dimensions': (dim_a > 0 or dim_b > 0),
                 'destination': (static.get('destination') or 'Unknown').strip(),
                 'call_sign': static.get('call_sign', ''),
@@ -929,34 +998,31 @@ class AISTracker:
         return df
 
 
-def create_vessel_layer(df: pd.DataFrame, zoom: float = 10) -> pdk.Layer:
-    """Create PyDeck polygon layer for vessel rectangles
+def create_vessel_layers(df: pd.DataFrame, zoom: float = 10) -> List[pdk.Layer]:
+    """Create PyDeck layers for vessels - hybrid approach
+    
+    At low zoom (< 12): Use ScatterplotLayer (dots) for visibility
+    At high zoom (>= 12): Use PolygonLayer (ship shapes with bow)
     
     Args:
         df: DataFrame with vessel data
-        zoom: Current map zoom level for dynamic scaling
+        zoom: Current map zoom level
+    
+    Returns:
+        List of layers to render
     """
     if len(df) == 0:
-        return None
+        return []
     
-    vessel_polygons = []
+    layers = []
     
+    # Build tooltip for each vessel
+    vessel_data = []
     for _, row in df.iterrows():
-        # Use actual dimensions if available, otherwise reasonable defaults
-        # Default 50m x 10m is a small cargo/fishing vessel size
         vessel_length = row['length'] if row['length'] > 0 and row['length'] < 500 else 50
         vessel_width = row['width'] if row['width'] > 0 and row['width'] < 80 else 10
         
-        polygon = create_vessel_polygon(
-            lat=row['latitude'],
-            lon=row['longitude'],
-            heading=row['heading'],
-            length=vessel_length,
-            width=vessel_width,
-            zoom=zoom
-        )
-        
-        # Build tooltip text for vessel
+        # Compliance emoji
         legal_val = row['legal_overall']
         if legal_val == 2:
             legal_emoji = '🔴'
@@ -965,9 +1031,9 @@ def create_vessel_layer(df: pd.DataFrame, zoom: float = 10) -> pdk.Layer:
         elif legal_val == 0:
             legal_emoji = '✅'
         else:
-            legal_emoji = '❓'  # Unknown/not checked
+            legal_emoji = '❓'
         
-        # Show dimensions (actual if available, or "default")
+        # Dimension text
         dim_text = f"{vessel_length:.0f}m x {vessel_width:.0f}m"
         if row['length'] <= 0:
             dim_text += " (est)"
@@ -981,27 +1047,77 @@ def create_vessel_layer(df: pd.DataFrame, zoom: float = 10) -> pdk.Layer:
             f"Heading: {row['heading']:.0f}°<br/>"
             f"Speed: {row['speed']:.1f} kts<br/>"
             f"Status: {row['nav_status_name']}<br/>"
-            f"Legal: {legal_emoji}<br/>"
+            f"Compliance: {legal_emoji}<br/>"
             f"Dest: {row['destination']}"
         )
         
-        vessel_polygons.append({
-            'polygon': polygon,
+        vessel_data.append({
+            'latitude': row['latitude'],
+            'longitude': row['longitude'],
             'name': row['name'],
             'tooltip': tooltip_text,
-            'color': row['color']
+            'color': row['color'],
+            'heading': row['heading'],
+            'length': vessel_length,
+            'width': vessel_width,
+            'dim_a': row.get('dim_a', 0) or 0,
+            'dim_b': row.get('dim_b', 0) or 0,
+            'dim_c': row.get('dim_c', 0) or 0,
+            'dim_d': row.get('dim_d', 0) or 0,
         })
     
-    return pdk.Layer(
-        'PolygonLayer',
-        data=vessel_polygons,
-        get_polygon='polygon',
-        get_fill_color='color',
-        get_line_color=[0, 0, 0, 0],  # No border
-        pickable=True,
-        auto_highlight=True,
-        extruded=False,
-    )
+    if zoom < 12:
+        # Low zoom: Use ScatterplotLayer (colored dots)
+        # Dots stay same pixel size regardless of map zoom
+        scatter_layer = pdk.Layer(
+            'ScatterplotLayer',
+            data=vessel_data,
+            get_position=['longitude', 'latitude'],
+            get_fill_color='color',
+            get_radius=300,  # meters - will appear as small dots
+            radius_min_pixels=4,  # minimum 4 pixels
+            radius_max_pixels=15,  # maximum 15 pixels
+            pickable=True,
+            auto_highlight=True,
+        )
+        layers.append(scatter_layer)
+    else:
+        # High zoom: Use PolygonLayer (ship shapes with pointed bow)
+        vessel_polygons = []
+        for v in vessel_data:
+            polygon = create_vessel_polygon(
+                lat=v['latitude'],
+                lon=v['longitude'],
+                heading=v['heading'],
+                length=v['length'],
+                width=v['width'],
+                zoom=zoom,
+                dim_a=v['dim_a'],
+                dim_b=v['dim_b'],
+                dim_c=v['dim_c'],
+                dim_d=v['dim_d']
+            )
+            vessel_polygons.append({
+                'polygon': polygon,
+                'name': v['name'],
+                'tooltip': v['tooltip'],
+                'color': v['color']
+            })
+        
+        polygon_layer = pdk.Layer(
+            'PolygonLayer',
+            data=vessel_polygons,
+            get_polygon='polygon',
+            get_fill_color='color',
+            get_line_color=[50, 50, 50, 100],
+            line_width_min_pixels=1,
+            pickable=True,
+            auto_highlight=True,
+            extruded=False,
+        )
+        layers.append(polygon_layer)
+    
+    return layers
 
 
 def create_zone_layer(zones: List[Dict], color: List[int], layer_id: str) -> pdk.Layer:
@@ -1075,10 +1191,10 @@ def show_vessel_details_panel(imo: str, vessel_name: str):
         with col3:
             st.markdown(f"**Class:** {details.get('classification', 'N/A')}")
             legal = details.get('legal_overall', 0)
-            legal_emoji = '🔴 Severe' if legal == 2 else ('🟡 Warning' if legal == 1 else '✅ Clear')
+            legal_emoji = '🔴 Severe' if legal == 2 else ('🟡 Caution' if legal == 1 else '✅ Clear')
             st.markdown(f"**Legal Status:** {legal_emoji}")
             dark_ind = details.get('dark_activity_indicator', 0)
-            dark_emoji = '🌑 Suspected' if dark_ind == 2 else ('⚠️ Warning' if dark_ind == 1 else '✅ None')
+            dark_emoji = '🔴 Severe' if dark_ind == 2 else ('🟡 Caution' if dark_ind == 1 else '✅ Clear')
             st.markdown(f"**Dark Activity:** {dark_emoji}")
         
         # Ownership Information
@@ -1303,7 +1419,7 @@ quick_filter = st.sidebar.radio(
 
 # Set filter defaults based on quick filter
 if quick_filter == "Dark Fleet Focus":
-    default_compliance = ["Severe (🔴)", "Warning (🟡)"]
+    default_compliance = ["Severe (🔴)", "Caution (🟡)"]
     default_sanctions = ["UN Sanctions", "OFAC Sanctions", "Dark Activity"]
     default_types = ["Tanker", "Cargo"]
 elif quick_filter == "Sanctioned Only":
@@ -1317,7 +1433,7 @@ else:
 
 # Compliance filters
 st.sidebar.subheader("Compliance")
-compliance_options = ["All", "Severe (🔴)", "Warning (🟡)", "Clear (✅)"]
+compliance_options = ["All", "Severe (🔴)", "Caution (🟡)", "Clear (✅)"]
 selected_compliance = st.sidebar.multiselect(
     "Legal Status", 
     compliance_options, 
@@ -1356,7 +1472,8 @@ mmsi_imo_count = len(mmsi_cache)
 mmsi_imo_found = len([v for v in mmsi_cache.values() if v])
 mmsi_imo_failed = len([v for v in mmsi_cache.values() if v is None])
 vessel_count = len([k for k in st.session_state.get('vessel_positions', {}).keys() if k != '_last_update'])
-last_update = st.session_state.get('last_data_update', 'Never')
+last_update_raw = st.session_state.get('last_data_update', 'Never')
+last_update_fmt = format_datetime(last_update_raw) if last_update_raw else 'Never'
 
 st.sidebar.info(f"""
 **Cached Vessels:** {vessel_count}
@@ -1367,7 +1484,7 @@ st.sidebar.info(f"""
 
 **MMSI→IMO:** {mmsi_imo_found} found
 
-**Last Update:** {last_update if last_update else 'Never'}
+**Last Update:** {last_update_fmt}
 """)
 
 col1, col2 = st.sidebar.columns(2)
@@ -1406,7 +1523,7 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
     if "All" not in selected_compliance and selected_compliance:
         compliance_map = {
             "Severe (🔴)": 2,
-            "Warning (🟡)": 1,
+            "Caution (🟡)": 1,
             "Clear (✅)": 0
         }
         selected_levels = [compliance_map[c] for c in selected_compliance if c in compliance_map]
@@ -1456,6 +1573,25 @@ def format_compliance_value(val) -> str:
         return "✅"  # Clear
     else:
         return "❓"  # Default to unknown
+
+
+def format_datetime(dt_string: str) -> str:
+    """Format ISO datetime string to readable format: '20 Dec 2025, 11:54 PM'"""
+    if not dt_string or dt_string == 'Unknown' or dt_string == 'Never':
+        return dt_string
+    
+    try:
+        # Parse ISO format
+        if '+' in dt_string:
+            # Has timezone info
+            dt = datetime.fromisoformat(dt_string)
+        else:
+            dt = datetime.fromisoformat(dt_string)
+        
+        # Format nicely
+        return dt.strftime('%d %b %Y, %I:%M %p')
+    except Exception:
+        return dt_string  # Return original if parsing fails
 
 
 def display_cached_data():
@@ -1513,7 +1649,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
         unknown_count = len(df[df['legal_overall'] < 0])  # -1 = not checked
         
         cols[3].metric("🔴 Severe", severe_count)
-        cols[4].metric("🟡 Warning", warning_count)
+        cols[4].metric("🟡 Caution", warning_count)
         cols[5].metric("✅ Clear", clear_count)
         cols[6].metric("❓ Unknown", unknown_count)
         cols[7].metric("📐 Real Dims", int(df['has_dimensions'].sum()))
@@ -1521,6 +1657,12 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
     # Determine map view
     # Use user-selected zoom level from sidebar, or default
     user_zoom = st.session_state.get('user_zoom', 10)
+    
+    # Singapore bounds: lat 1.15-1.47, lon 103.6-104.1
+    # Center point that shows all of Singapore nicely
+    SINGAPORE_CENTER_LAT = 1.28  # Centered on Singapore
+    SINGAPORE_CENTER_LON = 103.85
+    SINGAPORE_DEFAULT_ZOOM = 10  # Shows whole Singapore nicely
     
     if st.session_state.selected_vessel:
         vessel = df[df['mmsi'] == st.session_state.selected_vessel]
@@ -1533,8 +1675,8 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
             center_lon = st.session_state.map_center['lon']
             zoom = user_zoom
     else:
-        center_lat = 1.5
-        center_lon = 104.0
+        center_lat = SINGAPORE_CENTER_LAT
+        center_lon = SINGAPORE_CENTER_LON
         zoom = user_zoom
     
     # Create map layers
@@ -1568,10 +1710,9 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
         if fairway_layer:
             layers.append(fairway_layer)
     
-    # Add vessel layer (on top) with dynamic scaling based on zoom
-    vessel_layer = create_vessel_layer(df, zoom=zoom)
-    if vessel_layer:
-        layers.append(vessel_layer)
+    # Add vessel layers (on top) - hybrid: dots at low zoom, shapes at high zoom
+    vessel_layers = create_vessel_layers(df, zoom=zoom)
+    layers.extend(vessel_layers)
     
     # Create map
     with map_placeholder:
@@ -1600,7 +1741,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
         col1.subheader("📋 Vessel Details")
         if col2.button("🔄 Reset View"):
             st.session_state.selected_vessel = None
-            st.session_state.map_center = {"lat": 1.5, "lon": 104.0, "zoom": 8}
+            st.session_state.map_center = {"lat": 1.28, "lon": 103.85, "zoom": 10}
             st.rerun()
     
     with table_placeholder:
@@ -1612,7 +1753,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
         display_df['legal_display'] = display_df['legal_overall'].apply(format_compliance_value)
         display_df['un_display'] = display_df['un_sanction'].apply(format_compliance_value)
         display_df['ofac_display'] = display_df['ofac_sanction'].apply(format_compliance_value)
-        display_df['dark_display'] = display_df['dark_activity'].apply(lambda x: '🌑' if x == 2 else ('⚠️' if x == 1 else '✅'))
+        display_df['dark_display'] = display_df['dark_activity'].apply(format_compliance_value)
         display_df['speed_fmt'] = display_df['speed'].apply(lambda x: f"{x:.1f}")
         
         # Select and rename columns for display - IMO first, then MMSI
@@ -1651,10 +1792,11 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
     # Display timestamp
     cache_indicator = " 📦 (cached)" if is_cached else ""
     if isinstance(last_update, str) and last_update != 'Unknown':
-        st.success(f"✅ Last updated: {last_update} SGT{cache_indicator}")
+        formatted_time = format_datetime(last_update)
+        st.success(f"✅ Last updated: {formatted_time} SGT{cache_indicator}")
     else:
         sgt_now = datetime.now(SGT)
-        st.success(f"✅ Last updated: {sgt_now.strftime('%Y-%m-%d %H:%M:%S')} SGT{cache_indicator}")
+        st.success(f"✅ Last updated: {sgt_now.strftime('%d %b %Y, %I:%M %p')} SGT{cache_indicator}")
 
 
 def update_display():
@@ -1781,7 +1923,7 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("### 🎨 Color Legend")
 st.sidebar.markdown("""
 - 🔴 **Red**: Severe compliance issue
-- 🟡 **Yellow/Orange**: Warning
+- 🟡 **Yellow**: Caution
 - 🟢 **Green**: Clear
 - ⬜ **Gray**: Not checked (no IMO)
 """)
@@ -1789,7 +1931,7 @@ st.sidebar.markdown("""
 st.sidebar.markdown("### 🚨 Compliance Indicators")
 st.sidebar.markdown("""
 - ✅ Clear (0)
-- 🟡 Warning (1)
+- 🟡 Caution (1)
 - 🔴 Severe (2)
 - ❓ Not checked
 """)
