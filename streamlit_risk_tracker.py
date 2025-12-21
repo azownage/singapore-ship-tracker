@@ -130,6 +130,20 @@ NAV_STATUS_NAMES = {
 }
 
 
+def format_datetime(dt_string: str) -> str:
+    """Format ISO datetime string to readable format: '20 Dec 2025, 11:54 PM'"""
+    if not dt_string or dt_string == 'Unknown' or dt_string == 'Never':
+        return dt_string if dt_string else 'Never'
+    
+    try:
+        # Parse ISO format
+        dt = datetime.fromisoformat(dt_string)
+        # Format nicely
+        return dt.strftime('%d %b %Y, %I:%M %p')
+    except Exception:
+        return dt_string  # Return original if parsing fails
+
+
 def get_vessel_type_category(type_code: int) -> str:
     """Get vessel type category from AIS type code"""
     if type_code is None:
@@ -1573,25 +1587,6 @@ def format_compliance_value(val) -> str:
         return "✅"  # Clear
     else:
         return "❓"  # Default to unknown
-
-
-def format_datetime(dt_string: str) -> str:
-    """Format ISO datetime string to readable format: '20 Dec 2025, 11:54 PM'"""
-    if not dt_string or dt_string == 'Unknown' or dt_string == 'Never':
-        return dt_string
-    
-    try:
-        # Parse ISO format
-        if '+' in dt_string:
-            # Has timezone info
-            dt = datetime.fromisoformat(dt_string)
-        else:
-            dt = datetime.fromisoformat(dt_string)
-        
-        # Format nicely
-        return dt.strftime('%d %b %Y, %I:%M %p')
-    except Exception:
-        return dt_string  # Return original if parsing fails
 
 
 def display_cached_data():
