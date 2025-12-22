@@ -1101,10 +1101,31 @@ class AISTracker:
                 'call_sign': static.get('call_sign', ''),
                 'has_static': bool(static.get('name')),
                 'last_seen': last_seen_str,
+                # Core compliance fields
                 'legal_overall': -1,  # -1 = not checked yet
                 'un_sanction': -1,
                 'ofac_sanction': -1,
                 'dark_activity': -1,
+                # Additional ship sanction fields
+                'bes_sanction': -1,
+                'eu_sanction': -1,
+                'swiss_sanction': -1,
+                'ofac_non_sdn': -1,
+                'ofac_advisory': -1,
+                # Flag fields
+                'flag_disputed': -1,
+                'flag_sanctioned': -1,
+                # Port call fields
+                'port_call_3m': -1,
+                'port_call_6m': -1,
+                'port_call_12m': -1,
+                # Owner sanctions
+                'owner_ofac': -1,
+                'owner_un': -1,
+                'owner_eu': -1,
+                'owner_bes': -1,
+                # STS and other
+                'sts_partner_non_compliance': -1,
                 'compliance_checked': False,  # Track if checked
                 'color': self.get_ship_color(-1)  # Default unknown color
             })
@@ -1118,11 +1139,12 @@ class AISTracker:
         valid_imos = [str(imo) for imo in df['imo'].unique() if imo and imo != '0']
         
         # Step 2: For vessels WITHOUT IMO, try to look up via MMSI using Ships API
+        # Only do this if ships_api is provided (i.e., NOT in View Cached mode)
         missing_imo_mask = (df['imo'] == '0') | (df['imo'] == '')
         missing_imo_mmsis = df.loc[missing_imo_mask, 'mmsi'].astype(str).unique().tolist()
         
         if missing_imo_mmsis and ships_api:
-            # Look up IMO by MMSI
+            # Look up IMO by MMSI (will use cache, only API call for new ones)
             mmsi_to_imo = ships_api.batch_get_imo_by_mmsi(missing_imo_mmsis)
             
             # Update dataframe with found IMOs
@@ -1132,26 +1154,71 @@ class AISTracker:
                     df.at[idx, 'imo'] = found_imo
                     if found_imo not in valid_imos:
                         valid_imos.append(found_imo)
+        elif missing_imo_mmsis and not ships_api:
+            # View Cached mode: Use MMSI→IMO cache without API calls
+            cache = st.session_state.get('mmsi_to_imo_cache', {})
+            for idx, row in df.iterrows():
+                mmsi_str = str(row['mmsi'])
+                if mmsi_str in cache and cache[mmsi_str]:
+                    found_imo = cache[mmsi_str]
+                    df.at[idx, 'imo'] = found_imo
+                    if found_imo not in valid_imos:
+                        valid_imos.append(found_imo)
         
-        # Step 3: Get compliance data for all IMOs (from AIS + MMSI lookup)
+        # Step 3: Get compliance data for all IMOs
+        # If sp_api provided: fetch from API (which uses cache internally)
+        # If sp_api is None: use cache directly
+        compliance_cache = st.session_state.get('risk_data_cache', {})
+        
         if valid_imos and sp_api:
             compliance_data = sp_api.get_ship_compliance_data(valid_imos)
-            
-            for idx, row in df.iterrows():
-                imo = str(row['imo'])
-                if imo in compliance_data and compliance_data[imo]:
-                    comp = compliance_data[imo]
-                    legal_overall = comp.get('legal_overall', 0)
-                    # Convert to int if needed
-                    if isinstance(legal_overall, str):
-                        legal_overall = int(legal_overall) if legal_overall.isdigit() else 0
-                    
-                    df.at[idx, 'legal_overall'] = legal_overall
-                    df.at[idx, 'un_sanction'] = int(comp.get('ship_un_sanction', 0) or 0)
-                    df.at[idx, 'ofac_sanction'] = int(comp.get('ship_ofac_sanction', 0) or 0)
-                    df.at[idx, 'dark_activity'] = int(comp.get('dark_activity', 0) or 0)
-                    df.at[idx, 'compliance_checked'] = True
-                    df.at[idx, 'color'] = self.get_ship_color(legal_overall)
+        else:
+            # View Cached mode: use cache directly
+            compliance_data = {imo: compliance_cache.get(imo, {}) for imo in valid_imos}
+        
+        # Apply compliance data to dataframe with ALL fields
+        for idx, row in df.iterrows():
+            imo = str(row['imo'])
+            if imo in compliance_data and compliance_data[imo]:
+                comp = compliance_data[imo]
+                legal_overall = comp.get('legal_overall', -1)
+                # Convert to int if needed
+                if isinstance(legal_overall, str):
+                    legal_overall = int(legal_overall) if legal_overall.isdigit() else -1
+                
+                # Core compliance fields
+                df.at[idx, 'legal_overall'] = legal_overall
+                df.at[idx, 'un_sanction'] = int(comp.get('ship_un_sanction', 0) or 0)
+                df.at[idx, 'ofac_sanction'] = int(comp.get('ship_ofac_sanction', 0) or 0)
+                df.at[idx, 'dark_activity'] = int(comp.get('dark_activity', 0) or 0)
+                
+                # Additional ship sanction fields
+                df.at[idx, 'bes_sanction'] = int(comp.get('ship_bes_sanction', 0) or 0)
+                df.at[idx, 'eu_sanction'] = int(comp.get('ship_eu_sanction', 0) or 0)
+                df.at[idx, 'swiss_sanction'] = int(comp.get('ship_swiss_sanction', 0) or 0)
+                df.at[idx, 'ofac_non_sdn'] = int(comp.get('ship_ofac_non_sdn', 0) or 0)
+                df.at[idx, 'ofac_advisory'] = int(comp.get('ship_ofac_advisory', 0) or 0)
+                
+                # Flag fields
+                df.at[idx, 'flag_disputed'] = int(comp.get('flag_disputed', 0) or 0)
+                df.at[idx, 'flag_sanctioned'] = int(comp.get('flag_sanctioned', 0) or 0)
+                
+                # Port call fields
+                df.at[idx, 'port_call_3m'] = int(comp.get('port_call_3m', 0) or 0)
+                df.at[idx, 'port_call_6m'] = int(comp.get('port_call_6m', 0) or 0)
+                df.at[idx, 'port_call_12m'] = int(comp.get('port_call_12m', 0) or 0)
+                
+                # Owner sanctions
+                df.at[idx, 'owner_ofac'] = int(comp.get('owner_ofac', 0) or 0)
+                df.at[idx, 'owner_un'] = int(comp.get('owner_un', 0) or 0)
+                df.at[idx, 'owner_eu'] = int(comp.get('owner_eu', 0) or 0)
+                df.at[idx, 'owner_bes'] = int(comp.get('owner_bes', 0) or 0)
+                
+                # STS and other
+                df.at[idx, 'sts_partner_non_compliance'] = int(comp.get('sts_partner_non_compliance', 0) or 0)
+                
+                df.at[idx, 'compliance_checked'] = True
+                df.at[idx, 'color'] = self.get_ship_color(legal_overall)
         
         return df
 
@@ -1765,19 +1832,16 @@ def display_cached_data():
     cached_positions = st.session_state.vessel_positions
     last_update = cached_positions.get('_last_update', 'Unknown')
     
-    # Initialize APIs for compliance lookup (uses cached compliance data)
-    sp_api = None
-    ships_api = None
-    if enable_compliance and sp_username and sp_password:
-        sp_api = SPMaritimeAPI(sp_username, sp_password)
-        ships_api = SPShipsAPI(sp_username, sp_password)
+    # For View Cached: DON'T pass API objects to avoid re-querying
+    # We just use whatever compliance data is already in cache
+    # New API lookups only happen on "Refresh Now"
     
     # Create tracker with cached positions
     tracker = AISTracker(use_cached_positions=True)
     
-    # Get dataframe (will use cached compliance data too)
-    # Apply vessel expiry filter
-    df = tracker.get_dataframe_with_compliance(sp_api, ships_api, expiry_hours=vessel_expiry_hours)
+    # Get dataframe using ONLY cached data (sp_api=None, ships_api=None)
+    # This prevents any new API calls - just displays cached data
+    df = tracker.get_dataframe_with_compliance(sp_api=None, ships_api=None, expiry_hours=vessel_expiry_hours)
     
     if df.empty:
         st.info("ℹ️ No cached vessel data. Click 'Refresh Now' to collect AIS data.")
@@ -1924,11 +1988,40 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
             display_df['un_display'] = display_df['un_sanction'].apply(format_compliance_value)
             display_df['ofac_display'] = display_df['ofac_sanction'].apply(format_compliance_value)
             display_df['dark_display'] = display_df['dark_activity'].apply(format_compliance_value)
+            
+            # Additional compliance indicators
+            display_df['bes_display'] = display_df['bes_sanction'].apply(format_compliance_value)
+            display_df['eu_display'] = display_df['eu_sanction'].apply(format_compliance_value)
+            display_df['swiss_display'] = display_df['swiss_sanction'].apply(format_compliance_value)
+            display_df['flag_disp_display'] = display_df['flag_disputed'].apply(format_compliance_value)
+            display_df['flag_sanc_display'] = display_df['flag_sanctioned'].apply(format_compliance_value)
+            display_df['port3m_display'] = display_df['port_call_3m'].apply(format_compliance_value)
+            display_df['port6m_display'] = display_df['port_call_6m'].apply(format_compliance_value)
+            display_df['port12m_display'] = display_df['port_call_12m'].apply(format_compliance_value)
+            display_df['owner_ofac_display'] = display_df['owner_ofac'].apply(format_compliance_value)
+            display_df['owner_un_display'] = display_df['owner_un'].apply(format_compliance_value)
+            display_df['sts_display'] = display_df['sts_partner_non_compliance'].apply(format_compliance_value)
+            
             display_df['speed_fmt'] = display_df['speed'].apply(lambda x: f"{x:.1f}")
             
-            # Select and rename columns for display - IMO first, then MMSI
-            table_df = display_df[['name', 'imo', 'mmsi', 'type_name', 'nav_status_name', 'speed_fmt', 'destination', 'has_static_display', 'legal_display', 'un_display', 'ofac_display', 'dark_display']].copy()
-            table_df.columns = ['Name', 'IMO', 'MMSI', 'Type', 'Nav Status', 'Speed', 'Destination', 'Static', 'Legal', 'UN', 'OFAC', 'Dark']
+            # Select and rename columns for display - organized by category
+            # Core info | Ship Sanctions | Owner Sanctions | Dark/STS | Port Calls | Flag
+            table_df = display_df[[
+                'name', 'imo', 'mmsi', 'type_name', 'speed_fmt', 
+                'legal_display', 'un_display', 'ofac_display', 'eu_display', 'bes_display', 'swiss_display',
+                'owner_un_display', 'owner_ofac_display',
+                'dark_display', 'sts_display',
+                'port3m_display', 'port6m_display', 'port12m_display',
+                'flag_sanc_display', 'flag_disp_display'
+            ]].copy()
+            table_df.columns = [
+                'Name', 'IMO', 'MMSI', 'Type', 'Spd',
+                'Legal', 'UN', 'OFAC', 'EU', 'UK', 'Swiss',
+                'Own UN', 'Own OFAC',
+                'Dark', 'STS',
+                'Port 3m', 'Port 6m', 'Port 12m',
+                'Flag Sanc', 'Flag Disp'
+            ]
             
             # Display the dataframe with selection
             selected_rows = st.dataframe(
