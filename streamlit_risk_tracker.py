@@ -856,20 +856,26 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
     st.session_state.map_center = {"lat": center_lat, "lon": center_lon, "zoom": zoom}
     
     # Vessel table
-    col1, col2 = st.columns([6, 1])
-    col1.subheader("📋 Vessel Details")
-    if col2.button("🔄 Reset View"):
-        st.session_state.selected_vessel = None
-        st.session_state.map_center = {"lat": 1.28, "lon": 103.85, "zoom": 10}
-        st.rerun()
+    st.subheader("📋 Vessel Details")
     
     if len(df) == 0:
         st.info("No vessels to display. Adjust filters or refresh data.")
+        # Show empty dataframe with structure to maintain layout
+        empty_df = pd.DataFrame(columns=[
+            'Name', 'IMO', 'MMSI', 'Type', 'Nav Status',
+            'Legal', 'UN', 'OFAC', 'EU', 'UK',
+            'Own UN', 'Own OFAC', 'Dark', 'STS',
+            'Port 3m', 'Port 6m', 'Port 12m',
+            'Flag Sanc', 'Flag Disp'
+        ])
+        st.dataframe(empty_df, use_container_width=True, height=600, hide_index=True)
     else:
-        # Sort by legal_overall directly (natural sorting: -1, 0, 1, 2 ascending)
-        display_df = df.copy().sort_values(['legal_overall', 'name'], ascending=[True, True])
+        # Create a proper sort key: map -1 to 999 so it sorts last
+        display_df = df.copy()
+        display_df['legal_sort_key'] = display_df['legal_overall'].apply(lambda x: 999 if x == -1 else x)
+        display_df = display_df.sort_values(['legal_sort_key', 'name'], ascending=[True, True])
         
-        # Create display columns with emojis while keeping numeric columns
+        # Create display columns with emojis
         display_df['legal_display'] = display_df['legal_overall'].apply(format_compliance_value)
         display_df['un_display'] = display_df['un_sanction'].apply(format_compliance_value)
         display_df['ofac_display'] = display_df['ofac_sanction'].apply(format_compliance_value)
@@ -885,64 +891,71 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         display_df['flag_sanc_display'] = display_df['flag_sanctioned'].apply(format_compliance_value)
         display_df['flag_disp_display'] = display_df['flag_disputed'].apply(format_compliance_value)
         
-        # Create table with numeric and display columns
+        # Create sort keys for all compliance columns
+        for col in ['un_sanction', 'ofac_sanction', 'eu_sanction', 'bes_sanction', 
+                   'owner_un', 'owner_ofac', 'dark_activity', 'sts_partner_non_compliance',
+                   'port_call_3m', 'port_call_6m', 'port_call_12m', 
+                   'flag_sanctioned', 'flag_disputed']:
+            display_df[f'{col}_sort'] = display_df[col].apply(lambda x: 999 if x == -1 else x)
+        
+        # Create table with only display columns
         table_df = display_df[[
             'name', 'imo', 'mmsi', 'type_name', 'nav_status_name',
-            'legal_overall', 'legal_display',
-            'un_sanction', 'un_display',
-            'ofac_sanction', 'ofac_display',
-            'eu_sanction', 'eu_display',
-            'bes_sanction', 'bes_display',
-            'owner_un', 'owner_un_display',
-            'owner_ofac', 'owner_ofac_display',
-            'dark_activity', 'dark_display',
-            'sts_partner_non_compliance', 'sts_display',
-            'port_call_3m', 'port3m_display',
-            'port_call_6m', 'port6m_display',
-            'port_call_12m', 'port12m_display',
-            'flag_sanctioned', 'flag_sanc_display',
-            'flag_disputed', 'flag_disp_display'
+            'legal_sort_key', 'legal_display',
+            'un_sanction_sort', 'un_display',
+            'ofac_sanction_sort', 'ofac_display',
+            'eu_sanction_sort', 'eu_display',
+            'bes_sanction_sort', 'bes_display',
+            'owner_un_sort', 'owner_un_display',
+            'owner_ofac_sort', 'owner_ofac_display',
+            'dark_activity_sort', 'dark_display',
+            'sts_partner_non_compliance_sort', 'sts_display',
+            'port_call_3m_sort', 'port3m_display',
+            'port_call_6m_sort', 'port6m_display',
+            'port_call_12m_sort', 'port12m_display',
+            'flag_sanctioned_sort', 'flag_sanc_display',
+            'flag_disputed_sort', 'flag_disp_display'
         ]].copy()
         
-        # Configure column display
+        # Rename columns for display
+        table_df.columns = [
+            'Name', 'IMO', 'MMSI', 'Type', 'Nav Status',
+            'Legal_Sort', 'Legal',
+            'UN_Sort', 'UN',
+            'OFAC_Sort', 'OFAC',
+            'EU_Sort', 'EU',
+            'UK_Sort', 'UK',
+            'Own_UN_Sort', 'Own UN',
+            'Own_OFAC_Sort', 'Own OFAC',
+            'Dark_Sort', 'Dark',
+            'STS_Sort', 'STS',
+            'Port_3m_Sort', 'Port 3m',
+            'Port_6m_Sort', 'Port 6m',
+            'Port_12m_Sort', 'Port 12m',
+            'Flag_Sanc_Sort', 'Flag Sanc',
+            'Flag_Disp_Sort', 'Flag Disp'
+        ]
+        
+        # Configure columns - hide sort columns
         column_config = {
-            'name': st.column_config.TextColumn('Name', width='medium'),
-            'imo': st.column_config.TextColumn('IMO', width='small'),
-            'mmsi': st.column_config.TextColumn('MMSI', width='small'),
-            'type_name': st.column_config.TextColumn('Type', width='small'),
-            'nav_status_name': st.column_config.TextColumn('Nav Status', width='small'),
-            'legal_overall': st.column_config.NumberColumn('Legal #', width='small'),
-            'legal_display': st.column_config.TextColumn('Legal', width='small'),
-            'un_sanction': st.column_config.NumberColumn('UN #', width='small'),
-            'un_display': st.column_config.TextColumn('UN', width='small'),
-            'ofac_sanction': st.column_config.NumberColumn('OFAC #', width='small'),
-            'ofac_display': st.column_config.TextColumn('OFAC', width='small'),
-            'eu_sanction': st.column_config.NumberColumn('EU #', width='small'),
-            'eu_display': st.column_config.TextColumn('EU', width='small'),
-            'bes_sanction': st.column_config.NumberColumn('UK #', width='small'),
-            'bes_display': st.column_config.TextColumn('UK', width='small'),
-            'owner_un': st.column_config.NumberColumn('Own UN #', width='small'),
-            'owner_un_display': st.column_config.TextColumn('Own UN', width='small'),
-            'owner_ofac': st.column_config.NumberColumn('Own OFAC #', width='small'),
-            'owner_ofac_display': st.column_config.TextColumn('Own OFAC', width='small'),
-            'dark_activity': st.column_config.NumberColumn('Dark #', width='small'),
-            'dark_display': st.column_config.TextColumn('Dark', width='small'),
-            'sts_partner_non_compliance': st.column_config.NumberColumn('STS #', width='small'),
-            'sts_display': st.column_config.TextColumn('STS', width='small'),
-            'port_call_3m': st.column_config.NumberColumn('Port 3m #', width='small'),
-            'port3m_display': st.column_config.TextColumn('Port 3m', width='small'),
-            'port_call_6m': st.column_config.NumberColumn('Port 6m #', width='small'),
-            'port6m_display': st.column_config.TextColumn('Port 6m', width='small'),
-            'port_call_12m': st.column_config.NumberColumn('Port 12m #', width='small'),
-            'port12m_display': st.column_config.TextColumn('Port 12m', width='small'),
-            'flag_sanctioned': st.column_config.NumberColumn('Flag Sanc #', width='small'),
-            'flag_sanc_display': st.column_config.TextColumn('Flag Sanc', width='small'),
-            'flag_disputed': st.column_config.NumberColumn('Flag Disp #', width='small'),
-            'flag_disp_display': st.column_config.TextColumn('Flag Disp', width='small'),
+            'Legal_Sort': None,
+            'UN_Sort': None,
+            'OFAC_Sort': None,
+            'EU_Sort': None,
+            'UK_Sort': None,
+            'Own_UN_Sort': None,
+            'Own_OFAC_Sort': None,
+            'Dark_Sort': None,
+            'STS_Sort': None,
+            'Port_3m_Sort': None,
+            'Port_6m_Sort': None,
+            'Port_12m_Sort': None,
+            'Flag_Sanc_Sort': None,
+            'Flag_Disp_Sort': None,
         }
         
         selected_rows = st.dataframe(
-            table_df, use_container_width=True, height=500,
+            table_df, use_container_width=True, height=600,
             hide_index=True, on_select="rerun", selection_mode="single-row",
             column_config=column_config
         )
@@ -953,13 +966,13 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
             selected_imo = display_df.iloc[selected_idx]['imo']
             
             col1, col2, col3 = st.columns([3, 1, 1])
-            col1.info(f"Selected: **{table_df.iloc[selected_idx]['name']}** (IMO: {table_df.iloc[selected_idx]['imo']}, MMSI: {table_df.iloc[selected_idx]['mmsi']})")
+            col1.info(f"Selected: **{table_df.iloc[selected_idx]['Name']}** (IMO: {table_df.iloc[selected_idx]['IMO']}, MMSI: {table_df.iloc[selected_idx]['MMSI']})")
             if col2.button("🗺️ View on Map"):
                 st.session_state.selected_vessel = selected_mmsi
                 st.rerun()
             if col3.button("📋 View Details"):
                 st.session_state.show_details_imo = selected_imo
-                st.session_state.show_details_name = table_df.iloc[selected_idx]['name']
+                st.session_state.show_details_name = table_df.iloc[selected_idx]['Name']
     
     # Display timestamp
     cache_indicator = " 📦 (cached)" if is_cached else ""
