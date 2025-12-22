@@ -432,7 +432,7 @@ if 'show_details_imo' not in st.session_state:
     st.session_state.show_details_name = None
 
 if 'map_center' not in st.session_state:
-    st.session_state.map_center = {"lat": 1.28, "lon": 103.85, "zoom": 2}
+    st.session_state.map_center = {"lat": 1.28, "lon": 103.85, "zoom": 3}
 
 
 class SPShipsAPI:
