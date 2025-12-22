@@ -811,19 +811,30 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
     # Determine map view - preserve current view from session state
     user_zoom = st.session_state.get('user_zoom', 10)
     
-    if 'map_center' in st.session_state and st.session_state.map_center:
-        center_lat = st.session_state.map_center.get('lat', 1.28)
-        center_lon = st.session_state.map_center.get('lon', 103.85)
-        zoom = st.session_state.map_center.get('zoom', user_zoom)
-    else:
-        center_lat, center_lon, zoom = 1.28, 103.85, user_zoom
-    
+    # Always use stored map center if available (unless viewing a specific vessel)
     if st.session_state.selected_vessel and len(df) > 0:
         vessel = df[df['mmsi'] == st.session_state.selected_vessel]
         if len(vessel) > 0:
             center_lat = vessel.iloc[0]['latitude']
             center_lon = vessel.iloc[0]['longitude']
             zoom = max(user_zoom, 14)
+        else:
+            # Vessel not in filtered results, use stored position
+            if 'map_center' in st.session_state and st.session_state.map_center:
+                center_lat = st.session_state.map_center.get('lat', 1.28)
+                center_lon = st.session_state.map_center.get('lon', 103.85)
+                zoom = st.session_state.map_center.get('zoom', user_zoom)
+            else:
+                center_lat, center_lon, zoom = 1.28, 103.85, user_zoom
+    else:
+        # Use stored map position
+        if 'map_center' in st.session_state and st.session_state.map_center:
+            center_lat = st.session_state.map_center.get('lat', 1.28)
+            center_lon = st.session_state.map_center.get('lon', 103.85)
+            zoom = st.session_state.map_center.get('zoom', user_zoom)
+        else:
+            # First time - use default
+            center_lat, center_lon, zoom = 1.28, 103.85, user_zoom
     
     # Create map layers
     layers = []
@@ -850,7 +861,10 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         initial_view_state=view_state, layers=layers,
         tooltip={'html': '{tooltip}', 'style': {'backgroundColor': 'steelblue', 'color': 'white'}}
     )
-    st.pydeck_chart(deck, use_container_width=True)
+    
+    # Use a unique key to maintain map state across filter changes
+    map_key = f"map_{len(df)}"  # Changes only when vessel count changes significantly
+    st.pydeck_chart(deck, use_container_width=True, key=map_key)
     
     # Save map center to session state for persistence
     st.session_state.map_center = {"lat": center_lat, "lon": center_lon, "zoom": zoom}
@@ -860,20 +874,9 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
     
     if len(df) == 0:
         st.info("No vessels to display. Adjust filters or refresh data.")
-        # Show empty dataframe with structure to maintain layout
-        empty_df = pd.DataFrame(columns=[
-            'Name', 'IMO', 'MMSI', 'Type', 'Nav Status',
-            'Legal', 'UN', 'OFAC', 'EU', 'UK',
-            'Own UN', 'Own OFAC', 'Dark', 'STS',
-            'Port 3m', 'Port 6m', 'Port 12m',
-            'Flag Sanc', 'Flag Disp'
-        ])
-        st.dataframe(empty_df, use_container_width=True, height=600, hide_index=True)
     else:
-        # Create a proper sort key: map -1 to 999 so it sorts last
-        display_df = df.copy()
-        display_df['legal_sort_key'] = display_df['legal_overall'].apply(lambda x: 999 if x == -1 else x)
-        display_df = display_df.sort_values(['legal_sort_key', 'name'], ascending=[True, True])
+        # Sort by legal_overall: default descending order (2, 1, 0, -1)
+        display_df = df.copy().sort_values(['legal_overall', 'name'], ascending=[False, True])
         
         # Create display columns with emojis
         display_df['legal_display'] = display_df['legal_overall'].apply(format_compliance_value)
@@ -891,71 +894,70 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         display_df['flag_sanc_display'] = display_df['flag_sanctioned'].apply(format_compliance_value)
         display_df['flag_disp_display'] = display_df['flag_disputed'].apply(format_compliance_value)
         
-        # Create sort keys for all compliance columns
-        for col in ['un_sanction', 'ofac_sanction', 'eu_sanction', 'bes_sanction', 
-                   'owner_un', 'owner_ofac', 'dark_activity', 'sts_partner_non_compliance',
-                   'port_call_3m', 'port_call_6m', 'port_call_12m', 
-                   'flag_sanctioned', 'flag_disputed']:
-            display_df[f'{col}_sort'] = display_df[col].apply(lambda x: 999 if x == -1 else x)
-        
-        # Create table with only display columns
+        # Create table with display columns - keep original values for sorting
         table_df = display_df[[
             'name', 'imo', 'mmsi', 'type_name', 'nav_status_name',
-            'legal_sort_key', 'legal_display',
-            'un_sanction_sort', 'un_display',
-            'ofac_sanction_sort', 'ofac_display',
-            'eu_sanction_sort', 'eu_display',
-            'bes_sanction_sort', 'bes_display',
-            'owner_un_sort', 'owner_un_display',
-            'owner_ofac_sort', 'owner_ofac_display',
-            'dark_activity_sort', 'dark_display',
-            'sts_partner_non_compliance_sort', 'sts_display',
-            'port_call_3m_sort', 'port3m_display',
-            'port_call_6m_sort', 'port6m_display',
-            'port_call_12m_sort', 'port12m_display',
-            'flag_sanctioned_sort', 'flag_sanc_display',
-            'flag_disputed_sort', 'flag_disp_display'
+            'legal_overall', 'legal_display',
+            'un_sanction', 'un_display',
+            'ofac_sanction', 'ofac_display',
+            'eu_sanction', 'eu_display',
+            'bes_sanction', 'bes_display',
+            'owner_un', 'owner_un_display',
+            'owner_ofac', 'owner_ofac_display',
+            'dark_activity', 'dark_display',
+            'sts_partner_non_compliance', 'sts_display',
+            'port_call_3m', 'port3m_display',
+            'port_call_6m', 'port6m_display',
+            'port_call_12m', 'port12m_display',
+            'flag_sanctioned', 'flag_sanc_display',
+            'flag_disputed', 'flag_disp_display'
         ]].copy()
         
         # Rename columns for display
         table_df.columns = [
             'Name', 'IMO', 'MMSI', 'Type', 'Nav Status',
-            'Legal_Sort', 'Legal',
-            'UN_Sort', 'UN',
-            'OFAC_Sort', 'OFAC',
-            'EU_Sort', 'EU',
-            'UK_Sort', 'UK',
-            'Own_UN_Sort', 'Own UN',
-            'Own_OFAC_Sort', 'Own OFAC',
-            'Dark_Sort', 'Dark',
-            'STS_Sort', 'STS',
-            'Port_3m_Sort', 'Port 3m',
-            'Port_6m_Sort', 'Port 6m',
-            'Port_12m_Sort', 'Port 12m',
-            'Flag_Sanc_Sort', 'Flag Sanc',
-            'Flag_Disp_Sort', 'Flag Disp'
+            'Legal_Val', 'Legal',
+            'UN_Val', 'UN',
+            'OFAC_Val', 'OFAC',
+            'EU_Val', 'EU',
+            'UK_Val', 'UK',
+            'Own_UN_Val', 'Own UN',
+            'Own_OFAC_Val', 'Own OFAC',
+            'Dark_Val', 'Dark',
+            'STS_Val', 'STS',
+            'Port_3m_Val', 'Port 3m',
+            'Port_6m_Val', 'Port 6m',
+            'Port_12m_Val', 'Port 12m',
+            'Flag_Sanc_Val', 'Flag Sanc',
+            'Flag_Disp_Val', 'Flag Disp'
         ]
         
-        # Configure columns - hide sort columns
+        # Configure columns - hide value columns, auto-adjust width
         column_config = {
-            'Legal_Sort': None,
-            'UN_Sort': None,
-            'OFAC_Sort': None,
-            'EU_Sort': None,
-            'UK_Sort': None,
-            'Own_UN_Sort': None,
-            'Own_OFAC_Sort': None,
-            'Dark_Sort': None,
-            'STS_Sort': None,
-            'Port_3m_Sort': None,
-            'Port_6m_Sort': None,
-            'Port_12m_Sort': None,
-            'Flag_Sanc_Sort': None,
-            'Flag_Disp_Sort': None,
+            'Legal_Val': None,
+            'UN_Val': None,
+            'OFAC_Val': None,
+            'EU_Val': None,
+            'UK_Val': None,
+            'Own_UN_Val': None,
+            'Own_OFAC_Val': None,
+            'Dark_Val': None,
+            'STS_Val': None,
+            'Port_3m_Val': None,
+            'Port_6m_Val': None,
+            'Port_12m_Val': None,
+            'Flag_Sanc_Val': None,
+            'Flag_Disp_Val': None,
         }
         
+        # Calculate dynamic height based on number of rows
+        row_count = len(table_df)
+        header_height = 38
+        row_height = 35
+        dynamic_height = header_height + (row_height * min(row_count, 20))  # Max 20 rows visible
+        
         selected_rows = st.dataframe(
-            table_df, use_container_width=True, height=600,
+            table_df, use_container_width=True, height=dynamic_height,
             hide_index=True, on_select="rerun", selection_mode="single-row",
             column_config=column_config
         )
@@ -973,11 +975,6 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
             if col3.button("📋 View Details"):
                 st.session_state.show_details_imo = selected_imo
                 st.session_state.show_details_name = table_df.iloc[selected_idx]['Name']
-    
-    # Display timestamp
-    cache_indicator = " 📦 (cached)" if is_cached else ""
-    formatted_time = format_datetime(last_update) if isinstance(last_update, str) else datetime.now(SGT).strftime('%d %b %Y, %I:%M %p')
-    st.success(f"✅ Last updated: {formatted_time} SGT{cache_indicator}")
 
 def display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, 
                        show_anchorages, show_channels, show_fairways, 
@@ -1172,7 +1169,8 @@ vessel_count = len([k for k in st.session_state.get('vessel_positions', {}).keys
 last_update_fmt = format_datetime(st.session_state.get('last_data_update', 'Never'))
 
 st.sidebar.info(f"""**Cached Vessels:** {vessel_count}
-**Static Data:** {len(st.session_state.ship_static_cache)} vessels
+**Static Data:** {len(st.session_state.ship_static_cache)} 
+vessels
 **Compliance:** {len(st.session_state.risk_data_cache)} vessels
 **MMSI→IMO:** {mmsi_imo_found} found
 **Last Update:** {last_update_fmt}""")
