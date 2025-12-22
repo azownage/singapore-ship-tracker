@@ -1143,7 +1143,7 @@ def create_vessel_layers(df: pd.DataFrame, zoom: float = 10) -> List[pdk.Layer]:
         elif legal_val == 1:
             legal_emoji = '🟡'
         elif legal_val == 0:
-            legal_emoji = '✅'
+            legal_emoji = '🟢'
         else:
             legal_emoji = '❓'
         
@@ -1306,10 +1306,10 @@ def show_vessel_details_panel(imo: str, vessel_name: str):
         with col3:
             st.markdown(f"**Class:** {details.get('classification', 'N/A')}")
             legal = details.get('legal_overall', 0)
-            legal_emoji = '🔴 Severe' if legal == 2 else ('🟡 Caution' if legal == 1 else '✅ Clear')
+            legal_emoji = '🔴 Severe' if legal == 2 else ('🟡 Caution' if legal == 1 else '🟢 Clear')
             st.markdown(f"**Legal Status:** {legal_emoji}")
             dark_ind = details.get('dark_activity_indicator', 0)
-            dark_emoji = '🔴 Severe' if dark_ind == 2 else ('🟡 Caution' if dark_ind == 1 else '✅ Clear')
+            dark_emoji = '🔴 Severe' if dark_ind == 2 else ('🟡 Caution' if dark_ind == 1 else '🟢 Clear')
             st.markdown(f"**Dark Activity:** {dark_emoji}")
         
         # Ownership Information
@@ -1567,7 +1567,7 @@ else:
 
 # Compliance filters
 st.sidebar.subheader("Compliance")
-compliance_options = ["All", "Severe (🔴)", "Caution (🟡)", "Clear (✅)"]
+compliance_options = ["All", "Severe (🔴)", "Caution (🟡)", "Clear (🟢)"]
 selected_compliance = st.sidebar.multiselect(
     "Legal Status", 
     compliance_options, 
@@ -1658,7 +1658,7 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
         compliance_map = {
             "Severe (🔴)": 2,
             "Caution (🟡)": 1,
-            "Clear (✅)": 0
+            "Clear (🟢)": 0
         }
         selected_levels = [compliance_map[c] for c in selected_compliance if c in compliance_map]
         if selected_levels:
@@ -1704,7 +1704,7 @@ def format_compliance_value(val) -> str:
     elif val == 1 or val == '1':
         return "🟡"  # Warning
     elif val == 0 or val == '0':
-        return "✅"  # Clear
+        return "🟢"  # Clear
     else:
         return "❓"  # Default to unknown
 
@@ -1769,7 +1769,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
         
         cols[3].metric("🔴 Severe", severe_count)
         cols[4].metric("🟡 Caution", warning_count)
-        cols[5].metric("✅ Clear", clear_count)
+        cols[5].metric("🟢 Clear", clear_count)
         cols[6].metric("❓ Unknown", unknown_count)
         cols[7].metric("📐 Real Dims", real_dims)
     
