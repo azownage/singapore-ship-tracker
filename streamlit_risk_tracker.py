@@ -432,7 +432,7 @@ if 'show_details_imo' not in st.session_state:
     st.session_state.show_details_name = None
 
 if 'map_center' not in st.session_state:
-    st.session_state.map_center = {"lat": 1.28, "lon": 103.85, "zoom": 10}
+    st.session_state.map_center = {"lat": 1.28, "lon": 103.85, "zoom": 3}
 
 
 class SPShipsAPI:
@@ -1781,7 +1781,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
     # Center point that shows all of Singapore nicely
     SINGAPORE_CENTER_LAT = 1.28  # Centered on Singapore
     SINGAPORE_CENTER_LON = 103.85
-    SINGAPORE_DEFAULT_ZOOM = 1  # Shows whole Singapore nicely
+    SINGAPORE_DEFAULT_ZOOM = 3  # Shows whole Singapore nicely
     
     if st.session_state.selected_vessel:
         vessel = df[df['mmsi'] == st.session_state.selected_vessel]
