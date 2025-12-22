@@ -2090,9 +2090,9 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("### 🎨 Legend")
 st.sidebar.markdown("""
 **Vessel Colors & Indicators:**
-- 🔴: **Severe** (2)
-- 🟡: **Warning** (1)
-- 🟢: **Ok** (0)
+- 🔴: Severe (2)
+- 🟡: Warning (1)
+- 🟢: Ok (0)
 - ❓: Not checked (No IMO)
 
 **Zone Colors:**
