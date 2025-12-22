@@ -597,7 +597,7 @@ class AISTracker:
         
         return df
 
-def create_vessel_layers(df: pd.DataFrame, zoom: float = 10, display_mode: str = "Small Dots") -> List[pdk.Layer]:
+def create_vessel_layers(df: pd.DataFrame, zoom: float = 10, display_mode: str = "Dots") -> List[pdk.Layer]:
     """Create PyDeck layers for vessels - user-selectable display mode"""
     if len(df) == 0:
         return []
@@ -629,7 +629,7 @@ def create_vessel_layers(df: pd.DataFrame, zoom: float = 10, display_mode: str =
             'dim_c': row.get('dim_c', 0) or 0, 'dim_d': row.get('dim_d', 0) or 0,
         })
     
-    if display_mode == "Small Dots":
+    if display_mode == "Dots":
         # Use smaller dots - reduced from 300m to 150m radius
         layers.append(pdk.Layer(
             'ScatterplotLayer', data=vessel_data,
@@ -637,7 +637,7 @@ def create_vessel_layers(df: pd.DataFrame, zoom: float = 10, display_mode: str =
             get_radius=150, radius_min_pixels=3, radius_max_pixels=8,
             pickable=True, auto_highlight=True
         ))
-    else:  # "Actual Dimensions"
+    else:  # "Ship Shapes"
         vessel_polygons = []
         for v in vessel_data:
             polygon = create_vessel_polygon(
@@ -846,7 +846,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
     # Render map
     view_state = pdk.ViewState(latitude=center_lat, longitude=center_lon, zoom=zoom, pitch=0)
     deck = pdk.Deck(
-        map_style='mapbox://styles/mapbox/light-v11',
+        map_style='https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
         initial_view_state=view_state, layers=layers,
         tooltip={'html': '{tooltip}', 'style': {'backgroundColor': 'steelblue', 'color': 'white'}}
     )
@@ -869,33 +869,82 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         # Sort by legal_overall directly (natural sorting: -1, 0, 1, 2 ascending)
         display_df = df.copy().sort_values(['legal_overall', 'name'], ascending=[True, True])
         
-        # Format columns with emojis
-        for col in ['legal_overall', 'un_sanction', 'ofac_sanction', 'dark_activity', 
-                   'bes_sanction', 'eu_sanction', 'flag_disputed', 'flag_sanctioned',
-                   'port_call_3m', 'port_call_6m', 'port_call_12m', 
-                   'owner_ofac', 'owner_un', 'sts_partner_non_compliance']:
-            display_df[f'{col}_display'] = display_df[col].apply(format_compliance_value)
+        # Create display columns with emojis while keeping numeric columns
+        display_df['legal_display'] = display_df['legal_overall'].apply(format_compliance_value)
+        display_df['un_display'] = display_df['un_sanction'].apply(format_compliance_value)
+        display_df['ofac_display'] = display_df['ofac_sanction'].apply(format_compliance_value)
+        display_df['eu_display'] = display_df['eu_sanction'].apply(format_compliance_value)
+        display_df['bes_display'] = display_df['bes_sanction'].apply(format_compliance_value)
+        display_df['owner_un_display'] = display_df['owner_un'].apply(format_compliance_value)
+        display_df['owner_ofac_display'] = display_df['owner_ofac'].apply(format_compliance_value)
+        display_df['dark_display'] = display_df['dark_activity'].apply(format_compliance_value)
+        display_df['sts_display'] = display_df['sts_partner_non_compliance'].apply(format_compliance_value)
+        display_df['port3m_display'] = display_df['port_call_3m'].apply(format_compliance_value)
+        display_df['port6m_display'] = display_df['port_call_6m'].apply(format_compliance_value)
+        display_df['port12m_display'] = display_df['port_call_12m'].apply(format_compliance_value)
+        display_df['flag_sanc_display'] = display_df['flag_sanctioned'].apply(format_compliance_value)
+        display_df['flag_disp_display'] = display_df['flag_disputed'].apply(format_compliance_value)
         
+        # Create table with numeric and display columns
         table_df = display_df[[
             'name', 'imo', 'mmsi', 'type_name', 'nav_status_name',
-            'legal_overall_display', 'un_sanction_display', 'ofac_sanction_display', 
-            'eu_sanction_display', 'bes_sanction_display',
-            'owner_un_display', 'owner_ofac_display', 'dark_activity_display', 'sts_partner_non_compliance_display',
-            'port_call_3m_display', 'port_call_6m_display', 'port_call_12m_display',
-            'flag_sanctioned_display', 'flag_disputed_display'
+            'legal_overall', 'legal_display',
+            'un_sanction', 'un_display',
+            'ofac_sanction', 'ofac_display',
+            'eu_sanction', 'eu_display',
+            'bes_sanction', 'bes_display',
+            'owner_un', 'owner_un_display',
+            'owner_ofac', 'owner_ofac_display',
+            'dark_activity', 'dark_display',
+            'sts_partner_non_compliance', 'sts_display',
+            'port_call_3m', 'port3m_display',
+            'port_call_6m', 'port6m_display',
+            'port_call_12m', 'port12m_display',
+            'flag_sanctioned', 'flag_sanc_display',
+            'flag_disputed', 'flag_disp_display'
         ]].copy()
         
-        table_df.columns = [
-            'Name', 'IMO', 'MMSI', 'Type', 'Nav Status',
-            'Legal', 'UN', 'OFAC', 'EU', 'UK',
-            'Own UN', 'Own OFAC', 'Dark', 'STS',
-            'Port 3m', 'Port 6m', 'Port 12m',
-            'Flag Sanc', 'Flag Disp'
-        ]
+        # Configure column display
+        column_config = {
+            'name': st.column_config.TextColumn('Name', width='medium'),
+            'imo': st.column_config.TextColumn('IMO', width='small'),
+            'mmsi': st.column_config.TextColumn('MMSI', width='small'),
+            'type_name': st.column_config.TextColumn('Type', width='small'),
+            'nav_status_name': st.column_config.TextColumn('Nav Status', width='small'),
+            'legal_overall': st.column_config.NumberColumn('Legal #', width='small'),
+            'legal_display': st.column_config.TextColumn('Legal', width='small'),
+            'un_sanction': st.column_config.NumberColumn('UN #', width='small'),
+            'un_display': st.column_config.TextColumn('UN', width='small'),
+            'ofac_sanction': st.column_config.NumberColumn('OFAC #', width='small'),
+            'ofac_display': st.column_config.TextColumn('OFAC', width='small'),
+            'eu_sanction': st.column_config.NumberColumn('EU #', width='small'),
+            'eu_display': st.column_config.TextColumn('EU', width='small'),
+            'bes_sanction': st.column_config.NumberColumn('UK #', width='small'),
+            'bes_display': st.column_config.TextColumn('UK', width='small'),
+            'owner_un': st.column_config.NumberColumn('Own UN #', width='small'),
+            'owner_un_display': st.column_config.TextColumn('Own UN', width='small'),
+            'owner_ofac': st.column_config.NumberColumn('Own OFAC #', width='small'),
+            'owner_ofac_display': st.column_config.TextColumn('Own OFAC', width='small'),
+            'dark_activity': st.column_config.NumberColumn('Dark #', width='small'),
+            'dark_display': st.column_config.TextColumn('Dark', width='small'),
+            'sts_partner_non_compliance': st.column_config.NumberColumn('STS #', width='small'),
+            'sts_display': st.column_config.TextColumn('STS', width='small'),
+            'port_call_3m': st.column_config.NumberColumn('Port 3m #', width='small'),
+            'port3m_display': st.column_config.TextColumn('Port 3m', width='small'),
+            'port_call_6m': st.column_config.NumberColumn('Port 6m #', width='small'),
+            'port6m_display': st.column_config.TextColumn('Port 6m', width='small'),
+            'port_call_12m': st.column_config.NumberColumn('Port 12m #', width='small'),
+            'port12m_display': st.column_config.TextColumn('Port 12m', width='small'),
+            'flag_sanctioned': st.column_config.NumberColumn('Flag Sanc #', width='small'),
+            'flag_sanc_display': st.column_config.TextColumn('Flag Sanc', width='small'),
+            'flag_disputed': st.column_config.NumberColumn('Flag Disp #', width='small'),
+            'flag_disp_display': st.column_config.TextColumn('Flag Disp', width='small'),
+        }
         
         selected_rows = st.dataframe(
             table_df, use_container_width=True, height=500,
-            hide_index=True, on_select="rerun", selection_mode="single-row"
+            hide_index=True, on_select="rerun", selection_mode="single-row",
+            column_config=column_config
         )
         
         if selected_rows and selected_rows.selection and selected_rows.selection.rows:
@@ -904,13 +953,13 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
             selected_imo = display_df.iloc[selected_idx]['imo']
             
             col1, col2, col3 = st.columns([3, 1, 1])
-            col1.info(f"Selected: **{table_df.iloc[selected_idx]['Name']}** (IMO: {table_df.iloc[selected_idx]['IMO']}, MMSI: {table_df.iloc[selected_idx]['MMSI']})")
+            col1.info(f"Selected: **{table_df.iloc[selected_idx]['name']}** (IMO: {table_df.iloc[selected_idx]['imo']}, MMSI: {table_df.iloc[selected_idx]['mmsi']})")
             if col2.button("🗺️ View on Map"):
                 st.session_state.selected_vessel = selected_mmsi
                 st.rerun()
             if col3.button("📋 View Details"):
                 st.session_state.show_details_imo = selected_imo
-                st.session_state.show_details_name = table_df.iloc[selected_idx]['Name']
+                st.session_state.show_details_name = table_df.iloc[selected_idx]['name']
     
     # Display timestamp
     cache_indicator = " 📦 (cached)" if is_cached else ""
@@ -1026,19 +1075,13 @@ show_fairways = st.sidebar.checkbox("Show Fairways", value=True)
 
 st.sidebar.header("🔍 Map View")
 
-# Vessel Display Mode - REQUIREMENT: Smaller dots or actual dimensions
+# Vessel Display Mode
 vessel_display_mode = st.sidebar.radio(
     "Vessel Display Mode",
-    options=["Small Dots", "Actual Dimensions"],
-    index=st.session_state.get('vessel_display_mode_index', 0),
-    help="Small Dots: compact view with small colored dots. Actual Dimensions: ship shapes at real scale."
+    options=["Dots", "Ship Shapes"],
+    index=st.session_state.get('vessel_display_mode_index', 0)
 )
-st.session_state.vessel_display_mode_index = 0 if vessel_display_mode == "Small Dots" else 1
-
-if vessel_display_mode == "Actual Dimensions":
-    st.sidebar.caption("Ships shown at true scale with heading")
-else:
-    st.sidebar.caption("Ships shown as small colored dots")
+st.session_state.vessel_display_mode_index = 0 if vessel_display_mode == "Dots" else 1
 
 # Fixed zoom level - no slider
 zoom_level = 10  # Fixed zoom
@@ -1116,13 +1159,9 @@ vessel_count = len([k for k in st.session_state.get('vessel_positions', {}).keys
 last_update_fmt = format_datetime(st.session_state.get('last_data_update', 'Never'))
 
 st.sidebar.info(f"""**Cached Vessels:** {vessel_count}
-
 **Static Data:** {len(st.session_state.ship_static_cache)} vessels
-
 **Compliance:** {len(st.session_state.risk_data_cache)} vessels
-
 **MMSI→IMO:** {mmsi_imo_found} found
-
 **Last Update:** {last_update_fmt}""")
 
 col1, col2 = st.sidebar.columns(2)
