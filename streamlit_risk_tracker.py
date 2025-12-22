@@ -1867,22 +1867,10 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
         if len(df) == 0:
             st.info("No vessels to display. Adjust filters or refresh data.")
         else:
-            # Create a sort key that orders: Severe(2) > Warning(1) > Not Checked(-1) > Clear(0)
-            # Map: 2->3, 1->2, -1->1, 0->0 for descending sort
-            def compliance_sort_key(val):
-                if val == 2:
-                    return 3  # Severe - highest
-                elif val == 1:
-                    return 2  # Warning
-                elif val == -1:
-                    return 1  # Not checked
-                else:
-                    return 0  # Clear - lowest
-            
+            # Sort by legal_overall directly - pandas will sort -1, 0, 1, 2 in ascending order naturally
+            # For descending, it will be 2, 1, 0, -1
             display_df = df.copy()
-            display_df['_sort_key'] = display_df['legal_overall'].apply(compliance_sort_key)
-            display_df = display_df.sort_values(['_sort_key', 'name'], ascending=[False, True])
-            display_df = display_df.drop(columns=['_sort_key'])
+            display_df = display_df.sort_values(['legal_overall', 'name'], ascending=[True, True])
             
             # Format boolean/status columns with emojis
             display_df['has_static_display'] = display_df['has_static'].map({True: '✅', False: '❌'})
