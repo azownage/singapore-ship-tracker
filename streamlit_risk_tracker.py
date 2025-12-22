@@ -1860,7 +1860,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
         col1.subheader("📋 Vessel Details")
         if col2.button("🔄 Reset View"):
             st.session_state.selected_vessel = None
-            st.session_state.map_center = {"lat": 1.28, "lon": 103.85, "zoom": 3}
+            st.session_state.map_center = {"lat": 1.28, "lon": 103.85, "zoom": 10}
             st.rerun()
     
     with table_placeholder:
