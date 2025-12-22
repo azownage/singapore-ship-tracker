@@ -1553,11 +1553,11 @@ quick_filter = st.sidebar.radio(
 
 # Set filter defaults based on quick filter
 if quick_filter == "Dark Fleet":
-    default_compliance = ["Severe (🔴)", "Caution (🟡)"]
+    default_compliance = ["Severe", "Caution"]
     default_sanctions = ["Dark Activity"]
     default_types = ["Tanker", "Cargo"]
 elif quick_filter == "Sanctioned":
-    default_compliance = ["Severe (🔴)"]
+    default_compliance = ["Severe"]
     default_sanctions = ["UN Sanctions", "OFAC Sanctions"]
     default_types = ["All"]
 else:
@@ -1567,7 +1567,7 @@ else:
 
 # Compliance filters
 st.sidebar.subheader("Compliance")
-compliance_options = ["All", "Severe (🔴)", "Caution (🟡)", "Clear (✅)"]
+compliance_options = ["All", "Severe", "Caution", "Clear"]
 selected_compliance = st.sidebar.multiselect(
     "Legal Status", 
     compliance_options, 
