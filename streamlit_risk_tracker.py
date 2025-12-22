@@ -2093,7 +2093,7 @@ st.sidebar.markdown("""
 - 🔴 Severe
 - 🟡 Warning
 - 🟢 Clear
-- ❓ Unknown (No IMO)
+- ❓ Unknown
 
 **Zone Colors:**
 - 🔵 Anchorages
