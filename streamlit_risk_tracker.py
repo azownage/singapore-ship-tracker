@@ -597,7 +597,7 @@ class AISTracker:
         
         return df
 
-def create_vessel_layers(df: pd.DataFrame, zoom: float = 10, display_mode: str = "Dots") -> List[pdk.Layer]:
+def create_vessel_layers(df: pd.DataFrame, zoom: float = 10, display_mode: str = "Small Dots") -> List[pdk.Layer]:
     """Create PyDeck layers for vessels - user-selectable display mode"""
     if len(df) == 0:
         return []
@@ -629,14 +629,15 @@ def create_vessel_layers(df: pd.DataFrame, zoom: float = 10, display_mode: str =
             'dim_c': row.get('dim_c', 0) or 0, 'dim_d': row.get('dim_d', 0) or 0,
         })
     
-    if display_mode == "Dots":
+    if display_mode == "Small Dots":
+        # Use smaller dots - reduced from 300m to 150m radius
         layers.append(pdk.Layer(
             'ScatterplotLayer', data=vessel_data,
             get_position=['longitude', 'latitude'], get_fill_color='color',
-            get_radius=300, radius_min_pixels=4, radius_max_pixels=15,
+            get_radius=150, radius_min_pixels=3, radius_max_pixels=8,
             pickable=True, auto_highlight=True
         ))
-    else:  # "Actual Scale"
+    else:  # "Actual Dimensions"
         vessel_polygons = []
         for v in vessel_data:
             polygon = create_vessel_polygon(
@@ -845,7 +846,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
     # Render map
     view_state = pdk.ViewState(latitude=center_lat, longitude=center_lon, zoom=zoom, pitch=0)
     deck = pdk.Deck(
-        map_style='mapbox://styles/mapbox/dark-v10',
+        map_style='https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
         initial_view_state=view_state, layers=layers,
         tooltip={'html': '{tooltip}', 'style': {'backgroundColor': 'steelblue', 'color': 'white'}}
     )
@@ -1024,18 +1025,24 @@ show_channels = st.sidebar.checkbox("Show Channels", value=True)
 show_fairways = st.sidebar.checkbox("Show Fairways", value=True)
 
 st.sidebar.header("🔍 Map View")
-zoom_level = st.sidebar.slider("Zoom Level", 6, 18, st.session_state.get('user_zoom', 10))
-st.session_state.user_zoom = zoom_level
 
-# Vessel Display Mode - NEW REQUIREMENT 1
+# Vessel Display Mode - REQUIREMENT: Smaller dots or actual dimensions
 vessel_display_mode = st.sidebar.radio(
     "Vessel Display Mode",
-    options=["Dots", "Actual Scale"],
+    options=["Small Dots", "Actual Dimensions"],
     index=st.session_state.get('vessel_display_mode_index', 0),
-    help="Dots: colored dots. Actual Scale: ship shapes with real dimensions."
+    help="Small Dots: compact view with small colored dots. Actual Dimensions: ship shapes at real scale."
 )
-st.session_state.vessel_display_mode_index = 0 if vessel_display_mode == "Dots" else 1
-st.sidebar.caption("Vessels shown at 1:1 scale" if vessel_display_mode == "Actual Scale" else "Vessels shown as dots")
+st.session_state.vessel_display_mode_index = 0 if vessel_display_mode == "Small Dots" else 1
+
+if vessel_display_mode == "Actual Dimensions":
+    st.sidebar.caption("Ships shown at true scale with heading")
+else:
+    st.sidebar.caption("Ships shown as small colored dots")
+
+# Fixed zoom level - no slider
+zoom_level = 10  # Fixed zoom
+st.session_state.user_zoom = zoom_level
 
 maritime_zones = {"Anchorages": [], "Channels": [], "Fairways": []}
 excel_paths = ["/mnt/project/Anchorages_Channels_Fairways_Details.xlsx",
@@ -1060,18 +1067,25 @@ else:
 
 st.sidebar.subheader("Compliance")
 compliance_options = ["All", "Severe (🔴)", "Warning (🟡)", "Clear (🟢)"]
-selected_compliance = st.sidebar.multiselect("Legal Status", compliance_options, default=default_compliance if quick_filter != "Custom" else ["All"])
+selected_compliance = st.sidebar.multiselect("Legal Status", compliance_options, 
+                                             default=default_compliance if quick_filter != "Custom" else ["All"],
+                                             key="compliance_filter")
 sanction_options = ["All", "UN Sanctions", "OFAC Sanctions", "Dark Activity"]
-selected_sanctions = st.sidebar.multiselect("Sanctions & Dark Activity", sanction_options, default=default_sanctions if quick_filter != "Custom" else ["All"])
+selected_sanctions = st.sidebar.multiselect("Sanctions & Dark Activity", sanction_options, 
+                                            default=default_sanctions if quick_filter != "Custom" else ["All"],
+                                            key="sanctions_filter")
 
 st.sidebar.subheader("Vessel Type")
 vessel_types = ["All", "Cargo", "Tanker", "Passenger", "Tug", "Fishing", "High Speed Craft", "Pilot", "SAR", "Port Tender", "Law Enforcement", "Other", "Unknown"]
-selected_types = st.sidebar.multiselect("Types", vessel_types, default=default_types if quick_filter != "Custom" else ["All"])
+selected_types = st.sidebar.multiselect("Types", vessel_types, 
+                                       default=default_types if quick_filter != "Custom" else ["All"],
+                                       key="types_filter")
 
 st.sidebar.subheader("Navigation Status")
 nav_status_options = ["All"] + list(NAV_STATUS_NAMES.values())
-selected_nav_statuses = st.sidebar.multiselect("Status", nav_status_options, default=["All"])
-show_static_only = st.sidebar.checkbox("Ships with static data only", value=False)
+selected_nav_statuses = st.sidebar.multiselect("Status", nav_status_options, default=["All"],
+                                               key="nav_status_filter")
+show_static_only = st.sidebar.checkbox("Ships with static data only", value=False, key="static_filter")
 
 st.sidebar.header("💾 Cache Statistics")
 mmsi_cache = st.session_state.get('mmsi_to_imo_cache', {})
@@ -1079,11 +1093,15 @@ mmsi_imo_found = len([v for v in mmsi_cache.values() if v])
 vessel_count = len([k for k in st.session_state.get('vessel_positions', {}).keys() if k != '_last_update'])
 last_update_fmt = format_datetime(st.session_state.get('last_data_update', 'Never'))
 
-st.sidebar.info(f"""
+st.sidebar.markdown(f"""
 **Cached Vessels:** {vessel_count}
+
 **Static Data:** {len(st.session_state.ship_static_cache)} vessels
+
 **Compliance:** {len(st.session_state.risk_data_cache)} vessels
+
 **MMSI→IMO:** {mmsi_imo_found} found
+
 **Last Update:** {last_update_fmt}
 """)
 
@@ -1124,6 +1142,12 @@ if st.session_state.get('show_details_imo') and sp_username and sp_password:
                             st.session_state.get('show_details_name', ''),
                             sp_username, sp_password)
 
+# Auto-display cached data when filters change (keeps map/table visible)
+if st.session_state.get('data_loaded') and 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
+    display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
+                       show_channels, show_fairways, selected_compliance, selected_sanctions, 
+                       selected_types, selected_nav_statuses, show_static_only)
+
 # Auto-refresh
 st.sidebar.markdown("---")
 st.sidebar.markdown("### ⏱️ Auto-Refresh")
@@ -1145,16 +1169,14 @@ if auto_refresh:
         remaining = int(refresh_interval - elapsed)
         mins, secs = divmod(remaining, 60)
         st.sidebar.info(f"⏱️ Next refresh in **{mins}m {secs}s**" if mins > 0 else f"⏱️ Next refresh in **{secs}s**")
-        if st.session_state.get('data_loaded'):
-            display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
-                              show_channels, show_fairways, selected_compliance, selected_sanctions, 
-                              selected_types, selected_nav_statuses, show_static_only)
         time.sleep(1)
         st.rerun()
 
+# Show initial message only if no data loaded yet
 if 'data_loaded' not in st.session_state:
     st.session_state.data_loaded = False
-if not st.session_state.data_loaded and not auto_refresh:
+
+if not st.session_state.data_loaded:
     if 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
         cached_count = len([k for k in st.session_state.vessel_positions.keys() if k != '_last_update'])
         if cached_count > 0:
@@ -1167,11 +1189,16 @@ if not st.session_state.data_loaded and not auto_refresh:
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 🎨 Legend")
 st.sidebar.markdown("""
-**Vessel Colors:**
-- 🔴 Severe | 🟡 Warning | 🟢 Clear | ❓ Unknown
+**Vessel Compliance Status:**
+- 🔴 Severe
+- 🟡 Warning
+- 🟢 Clear
+- ❓ Unknown
 
-**Zone Colors:**
-- 🔵 Anchorages | 🟡 Channels | 🟠 Fairways
+**Maritime Zones:**
+- 🔵 Anchorages
+- 🟡 Channels
+- 🟠 Fairways
 """)
 st.sidebar.markdown("---")
 st.sidebar.caption("Data: AISStream.io + S&P Global Maritime")
