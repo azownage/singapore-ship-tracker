@@ -2090,15 +2090,15 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("### 🎨 Legend")
 st.sidebar.markdown("""
 **Vessel Colors & Indicators:**
-- 🔴 **Severe** (2): Major compliance issue
-- 🟡 **Warning** (1): Warning flag
-- 🟢 **Clear** (0): No issues
-- ⬜ **Gray** / ❓: Not checked (no IMO)
+- 🔴 **Severe**
+- 🟡 **Warning**
+- 🟢 **Clear**
+- ❓ **Not Checked (No IMO)**
 
 **Zone Colors:**
-- 🔵 Cyan: Anchorages
-- 🟡 Yellow: Channels
-- 🟠 Orange: Fairways
+- 🔵 Anchorages
+- 🟡 Channels
+- 🟠 Fairways
 """)
 
 st.sidebar.markdown("---")
