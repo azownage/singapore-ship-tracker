@@ -1762,7 +1762,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
             severe_count = len(df[df['legal_overall'] == 2])
             warning_count = len(df[df['legal_overall'] == 1])
             clear_count = len(df[df['legal_overall'] == 0])
-            unknown_count = len(df[df['legal_overall'] < 0])
+            not_checked_count = len(df[df['legal_overall'] < 0])
             real_dims = int(df['has_dimensions'].sum())
         else:
             severe_count = warning_count = clear_count = unknown_count = real_dims = 0
@@ -1770,7 +1770,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
         cols[3].metric("🔴 Severe", severe_count)
         cols[4].metric("🟡 Warning", warning_count)
         cols[5].metric("🟢 Clear", clear_count)
-        cols[6].metric("❓ Unknown", unknown_count)
+        cols[6].metric("❓ Not Checked", not_checked_count)
         cols[7].metric("📐 Real Dims", real_dims)
     
     # Determine map view
