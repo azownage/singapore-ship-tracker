@@ -1554,7 +1554,7 @@ quick_filter = st.sidebar.radio(
 # Set filter defaults based on quick filter
 if quick_filter == "Dark Fleet Focus":
     default_compliance = ["Severe (🔴)", "Caution (🟡)"]
-    default_sanctions = ["UN Sanctions", "OFAC Sanctions", "Dark Activity"]
+    default_sanctions = ["Dark Activity"]
     default_types = ["Tanker", "Cargo"]
 elif quick_filter == "Sanctioned Only":
     default_compliance = ["Severe (🔴)"]
