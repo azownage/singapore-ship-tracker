@@ -1496,20 +1496,34 @@ show_anchorages = st.sidebar.checkbox("Show Anchorages", value=True)
 show_channels = st.sidebar.checkbox("Show Channels", value=True)
 show_fairways = st.sidebar.checkbox("Show Fairways", value=True)
 
-# Vessel Display Mode
-vessel_display_mode = st.sidebar.radio(
-    "Vessel Display Mode",
-    options=["Dots", "Actual Scale"],
-    index=st.session_state.get('vessel_display_mode_index', 0),
-    help="Dots: Show vessels as colored dots. Actual Scale: Show vessels with their real dimensions and heading."
+# Map Zoom Control
+st.sidebar.header("🔍 Map View")
+zoom_level = st.sidebar.slider(
+    "Zoom Level",
+    min_value=6,
+    max_value=18,
+    value=st.session_state.get('user_zoom', 10),
+    help="Higher zoom = closer view, vessels at actual scale. Lower zoom = wider view, vessels enlarged for visibility."
 )
-# Save the selection index
-st.session_state.vessel_display_mode_index = 0 if vessel_display_mode == "Dots" else 1
+st.session_state.user_zoom = zoom_level
 
-if vessel_display_mode == "Actual Scale":
-    st.sidebar.caption("Vessels shown at 1:1 scale with ship shapes")
-else:
-    st.sidebar.caption("Vessels shown as dots for better visibility")
+# Show scale info
+scale_info = {
+    6: "20x scale (regional)",
+    7: "20x scale (regional)",
+    8: "12x scale (wide area)",
+    9: "12x scale (wide area)",
+    10: "6x scale (port area)",
+    11: "6x scale (port area)",
+    12: "3x scale (harbor)",
+    13: "3x scale (harbor)",
+    14: "1.5x scale (close)",
+    15: "1.5x scale (close)",
+    16: "1:1 actual scale",
+    17: "1:1 actual scale",
+    18: "1:1 actual scale"
+}
+st.sidebar.caption(f"Vessel scale: {scale_info.get(zoom_level, '1:1')}")
 
 # Load maritime zones if any are enabled
 maritime_zones = {"Anchorages": [], "Channels": [], "Fairways": []}
