@@ -1496,17 +1496,6 @@ show_anchorages = st.sidebar.checkbox("Show Anchorages", value=True)
 show_channels = st.sidebar.checkbox("Show Channels", value=True)
 show_fairways = st.sidebar.checkbox("Show Fairways", value=True)
 
-# Map Zoom Control
-st.sidebar.header("🔍 Map View")
-zoom_level = st.sidebar.slider(
-    "Zoom Level",
-    min_value=6,
-    max_value=18,
-    value=st.session_state.get('user_zoom', 10),
-    help="Higher zoom = closer view. Lower zoom = wider view."
-)
-st.session_state.user_zoom = zoom_level
-
 # Vessel Display Mode
 vessel_display_mode = st.sidebar.radio(
     "Vessel Display Mode",
