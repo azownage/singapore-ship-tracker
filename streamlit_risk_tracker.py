@@ -1781,7 +1781,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
     # Center point that shows all of Singapore nicely
     SINGAPORE_CENTER_LAT = 1.28  # Centered on Singapore
     SINGAPORE_CENTER_LON = 103.85
-    SINGAPORE_DEFAULT_ZOOM = 3  # Shows whole Singapore nicely
+    SINGAPORE_DEFAULT_ZOOM = 10  # Shows whole Singapore nicely
     
     if st.session_state.selected_vessel:
         vessel = df[df['mmsi'] == st.session_state.selected_vessel]
