@@ -957,6 +957,8 @@ class AISTracker:
             'ship_name': metadata.get('ShipName', 'Unknown'),
             'timestamp': datetime.now(SGT).isoformat()
         }
+        # Track when this vessel was last seen (for expiry)
+        self.ships[mmsi]['last_seen'] = datetime.now(SGT).isoformat()
     
     def process_static(self, ais_message: Dict):
         """Process AIS static data report - merges with cached data to preserve dimensions"""
@@ -1011,12 +1013,31 @@ class AISTracker:
             save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache, st.session_state.get('mmsi_to_imo_cache', {}))
             st.session_state.last_save = time.time()
     
-    def get_dataframe_with_compliance(self, sp_api: Optional[SPMaritimeAPI] = None, ships_api: Optional[SPShipsAPI] = None) -> pd.DataFrame:
-        """Get dataframe with compliance indicators"""
+    def get_dataframe_with_compliance(self, sp_api: Optional[SPMaritimeAPI] = None, ships_api: Optional[SPShipsAPI] = None, expiry_hours: Optional[int] = None) -> pd.DataFrame:
+        """Get dataframe with compliance indicators
+        
+        Args:
+            sp_api: S&P Maritime API for compliance data
+            ships_api: S&P Ships API for MMSI-to-IMO lookups
+            expiry_hours: Remove vessels not seen in this many hours (None = keep all)
+        """
         data = []
+        now = datetime.now(SGT)
         
         for mmsi, ship_data in self.ships.items():
             pos = ship_data.get('latest_position')
+            
+            # Check vessel expiry
+            if expiry_hours is not None:
+                last_seen_str = ship_data.get('last_seen')
+                if last_seen_str:
+                    try:
+                        last_seen = datetime.fromisoformat(last_seen_str)
+                        hours_since_seen = (now - last_seen).total_seconds() / 3600
+                        if hours_since_seen > expiry_hours:
+                            continue  # Skip expired vessel
+                    except:
+                        pass  # If parsing fails, include vessel
             
             static = ship_data.get('static_data')
             if not static:
@@ -1053,6 +1074,9 @@ class AISTracker:
                 length = est_length
                 width = est_width
             
+            # Get last_seen timestamp
+            last_seen_str = ship_data.get('last_seen', pos.get('timestamp', ''))
+            
             data.append({
                 'mmsi': mmsi,
                 'name': name,
@@ -1076,6 +1100,7 @@ class AISTracker:
                 'destination': (static.get('destination') or 'Unknown').strip(),
                 'call_sign': static.get('call_sign', ''),
                 'has_static': bool(static.get('name')),
+                'last_seen': last_seen_str,
                 'legal_overall': -1,  # -1 = not checked yet
                 'un_sanction': -1,
                 'ofac_sanction': -1,
@@ -1489,6 +1514,27 @@ coverage_info = {
 }
 st.sidebar.caption(coverage_info[selected_coverage])
 
+# Vessel Expiry Setting
+st.sidebar.subheader("⏱️ Vessel Expiry")
+expiry_options = {
+    "1 hour": 1,
+    "2 hours": 2,
+    "4 hours": 4,
+    "8 hours": 8,
+    "12 hours": 12,
+    "24 hours": 24,
+    "Never (keep forever)": None
+}
+selected_expiry = st.sidebar.selectbox(
+    "Remove vessels not seen in:",
+    options=list(expiry_options.keys()),
+    index=2,  # Default to 4 hours
+    help="Vessels not detected within this time will be removed from display"
+)
+vessel_expiry_hours = expiry_options[selected_expiry]
+st.sidebar.caption("💡 Run multiple refreshes to accumulate vessels. Old vessels auto-expire.")
+st.sidebar.caption(coverage_info[selected_coverage])
+
 # Maritime Zones
 st.sidebar.header("🗺️ Maritime Zones")
 show_anchorages = st.sidebar.checkbox("Show Anchorages", value=True)
@@ -1730,7 +1776,8 @@ def display_cached_data():
     tracker = AISTracker(use_cached_positions=True)
     
     # Get dataframe (will use cached compliance data too)
-    df = tracker.get_dataframe_with_compliance(sp_api, ships_api)
+    # Apply vessel expiry filter
+    df = tracker.get_dataframe_with_compliance(sp_api, ships_api, expiry_hours=vessel_expiry_hours)
     
     if df.empty:
         st.info("ℹ️ No cached vessel data. Click 'Refresh Now' to collect AIS data.")
@@ -1942,7 +1989,7 @@ def update_display():
                 st.warning("⚠️ No AISStream API key provided. Please add it to secrets.")
                 return
             
-            df = tracker.get_dataframe_with_compliance(sp_api, ships_api)
+            df = tracker.get_dataframe_with_compliance(sp_api, ships_api, expiry_hours=vessel_expiry_hours)
     
     status_placeholder.empty()
     
@@ -1954,7 +2001,11 @@ def update_display():
     df = apply_filters(df)
     
     if df.empty:
-        st.info("ℹ️ No ships match the selected filters.")
+        st.warning("⚠️ No vessels match the current filters. Adjust filters to see vessels.")
+        # Get last update time
+        last_update = st.session_state.get('last_data_update', datetime.now(SGT).strftime('%Y-%m-%d %H:%M:%S'))
+        # Still show empty map with zones
+        display_vessel_data(df, last_update, is_cached=False, show_empty_message=True)
         return
     
     # Get last update time
