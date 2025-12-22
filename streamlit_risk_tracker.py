@@ -2093,7 +2093,7 @@ st.sidebar.markdown("""
 - 🔴: **Severe** (2)
 - 🟡: **Warning** (1)
 - 🟢: **Ok** (0)
-- ❓: Not checked (no IMO)
+- ❓: Not checked (No IMO)
 
 **Zone Colors:**
 - 🔵: Anchorages
