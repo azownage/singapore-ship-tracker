@@ -2090,15 +2090,15 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("### 🎨 Legend")
 st.sidebar.markdown("""
 **Vessel Colors & Indicators:**
-- 🔴: Severe
-- 🟡: Warning
-- 🟢: Ok
-- ❓: Not checked (No IMO)
+- 🔴 Severe
+- 🟡 Warning
+- 🟢 Ok
+- ❓ Not checked (No IMO)
 
 **Zone Colors:**
-- 🔵: Anchorages
-- 🟡: Channels
-- 🟠: Fairways
+- 🔵 Anchorages
+- 🟡 Channels
+- 🟠 Fairways
 """)
 
 st.sidebar.markdown("---")
