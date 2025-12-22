@@ -1546,7 +1546,7 @@ st.sidebar.header("🔍 Filters")
 st.sidebar.subheader("Quick Filters")
 quick_filter = st.sidebar.radio(
     "Preset",
-    ["All Vessels", "Dark Fleet", "Sanctioned", "Custom"],
+    ["All Vessels", "Dark Fleet", "Sanctioned"\n, "Custom"],
     index=0,
     horizontal=True
 )
