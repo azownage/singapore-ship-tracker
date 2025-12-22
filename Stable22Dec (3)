@@ -432,7 +432,7 @@ if 'show_details_imo' not in st.session_state:
     st.session_state.show_details_name = None
 
 if 'map_center' not in st.session_state:
-    st.session_state.map_center = {"lat": 1.28, "lon": 103.85, "zoom": 10}
+    st.session_state.map_center = {"lat": 1.28, "lon": 103.85, "zoom": 3}
 
 
 class SPShipsAPI:
@@ -1143,7 +1143,7 @@ def create_vessel_layers(df: pd.DataFrame, zoom: float = 10) -> List[pdk.Layer]:
         elif legal_val == 1:
             legal_emoji = '🟡'
         elif legal_val == 0:
-            legal_emoji = '✅'
+            legal_emoji = '🟢'
         else:
             legal_emoji = '❓'
         
@@ -1306,10 +1306,10 @@ def show_vessel_details_panel(imo: str, vessel_name: str):
         with col3:
             st.markdown(f"**Class:** {details.get('classification', 'N/A')}")
             legal = details.get('legal_overall', 0)
-            legal_emoji = '🔴 Severe' if legal == 2 else ('🟡 Caution' if legal == 1 else '✅ Clear')
+            legal_emoji = '🔴 Severe' if legal == 2 else ('🟡 Warning' if legal == 1 else '🟢 Clear')
             st.markdown(f"**Legal Status:** {legal_emoji}")
             dark_ind = details.get('dark_activity_indicator', 0)
-            dark_emoji = '🔴 Severe' if dark_ind == 2 else ('🟡 Caution' if dark_ind == 1 else '✅ Clear')
+            dark_emoji = '🔴 Severe' if dark_ind == 2 else ('🟡 Warning' if dark_ind == 1 else '🟢 Clear')
             st.markdown(f"**Dark Activity:** {dark_emoji}")
         
         # Ownership Information
@@ -1553,8 +1553,8 @@ quick_filter = st.sidebar.radio(
 
 # Set filter defaults based on quick filter
 if quick_filter == "Dark Fleet Focus":
-    default_compliance = ["Severe (🔴)", "Caution (🟡)"]
-    default_sanctions = ["UN Sanctions", "OFAC Sanctions", "Dark Activity"]
+    default_compliance = ["Severe (🔴)", "Warning (🟡)"]
+    default_sanctions = ["Dark Activity"]
     default_types = ["Tanker", "Cargo"]
 elif quick_filter == "Sanctioned Only":
     default_compliance = ["Severe (🔴)"]
@@ -1567,7 +1567,7 @@ else:
 
 # Compliance filters
 st.sidebar.subheader("Compliance")
-compliance_options = ["All", "Severe (🔴)", "Caution (🟡)", "Clear (✅)"]
+compliance_options = ["All", "Severe (🔴)", "Warning (🟡)", "Clear (🟢)"]
 selected_compliance = st.sidebar.multiselect(
     "Legal Status", 
     compliance_options, 
@@ -1657,8 +1657,8 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
     if selected_compliance and "All" not in selected_compliance:
         compliance_map = {
             "Severe (🔴)": 2,
-            "Caution (🟡)": 1,
-            "Clear (✅)": 0
+            "Warning (🟡)": 1,
+            "Clear (🟢)": 0
         }
         selected_levels = [compliance_map[c] for c in selected_compliance if c in compliance_map]
         if selected_levels:
@@ -1704,7 +1704,7 @@ def format_compliance_value(val) -> str:
     elif val == 1 or val == '1':
         return "🟡"  # Warning
     elif val == 0 or val == '0':
-        return "✅"  # Clear
+        return "🟢"  # Clear
     else:
         return "❓"  # Default to unknown
 
@@ -1768,8 +1768,8 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
             severe_count = warning_count = clear_count = unknown_count = real_dims = 0
         
         cols[3].metric("🔴 Severe", severe_count)
-        cols[4].metric("🟡 Caution", warning_count)
-        cols[5].metric("✅ Clear", clear_count)
+        cols[4].metric("🟡 Warning", warning_count)
+        cols[5].metric("🟢 Clear", clear_count)
         cols[6].metric("❓ Unknown", unknown_count)
         cols[7].metric("📐 Real Dims", real_dims)
     
@@ -1781,7 +1781,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
     # Center point that shows all of Singapore nicely
     SINGAPORE_CENTER_LAT = 1.28  # Centered on Singapore
     SINGAPORE_CENTER_LON = 103.85
-    SINGAPORE_DEFAULT_ZOOM = 10  # Shows whole Singapore nicely
+    SINGAPORE_DEFAULT_ZOOM = 3  # Shows whole Singapore nicely
     
     if st.session_state.selected_vessel:
         vessel = df[df['mmsi'] == st.session_state.selected_vessel]
@@ -1867,13 +1867,13 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
         if len(df) == 0:
             st.info("No vessels to display. Adjust filters or refresh data.")
         else:
-            # Create a sort key that orders: Severe(2) > Caution(1) > Not Checked(-1) > Clear(0)
+            # Create a sort key that orders: Severe(2) > Warning(1) > Not Checked(-1) > Clear(0)
             # Map: 2->3, 1->2, -1->1, 0->0 for descending sort
             def compliance_sort_key(val):
                 if val == 2:
                     return 3  # Severe - highest
                 elif val == 1:
-                    return 2  # Caution
+                    return 2  # Warning
                 elif val == -1:
                     return 1  # Not checked
                 else:
@@ -2090,15 +2090,15 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("### 🎨 Legend")
 st.sidebar.markdown("""
 **Vessel Colors & Indicators:**
-- 🔴 **Severe** (2): Major compliance issue
-- 🟡 **Caution** (1): Warning flag
-- 🟢 **Clear** (0): No issues
-- ⬜ **Gray** / ❓: Not checked (no IMO)
+- 🔴 **Severe**
+- 🟡 **Warning**
+- 🟢 **Clear**
+- ❓ **Not Checked (No IMO)**
 
 **Zone Colors:**
-- 🔵 Cyan: Anchorages
-- 🟡 Yellow: Channels
-- 🟠 Orange: Fairways
+- 🔵 Anchorages
+- 🟡 Channels
+- 🟠 Fairways
 """)
 
 st.sidebar.markdown("---")
