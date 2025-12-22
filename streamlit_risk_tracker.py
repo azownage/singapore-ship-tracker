@@ -1770,7 +1770,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
         cols[3].metric("🔴 Severe", severe_count)
         cols[4].metric("🟡 Warning", warning_count)
         cols[5].metric("🟢 Clear", clear_count)
-        cols[6].metric("❓ Not Checked", not_checked_count)
+        cols[6].metric("❓ Not Checked (No IMO)", not_checked_count)
         cols[7].metric("📐 Real Dims", real_dims)
     
     # Determine map view
