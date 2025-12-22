@@ -1759,20 +1759,20 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
         cols[2].metric("📡 Has Static", int(df['has_static'].sum()) if len(df) > 0 else 0)
         
         if len(df) > 0:
+            real_dims = int(df['has_dimensions'].sum())
             severe_count = len(df[df['legal_overall'] == 2])
             warning_count = len(df[df['legal_overall'] == 1])
             clear_count = len(df[df['legal_overall'] == 0])
             unknown_count = len(df[df['legal_overall'] < 0])
-            real_dims = int(df['has_dimensions'].sum())
         else:
             severe_count = warning_count = clear_count = unknown_count = real_dims = 0
         
-        cols[3].metric("🔴 Severe", severe_count)
-        cols[4].metric("🟡 Warning", warning_count)
-        cols[5].metric("🟢 Clear", clear_count)
-        cols[6].metric("❓ Unknown", unknown_count)
-        cols[7].metric("📐 Real Dims", real_dims)
-    
+        cols[3].metric("📐 Real Dims", real_dims)
+        cols[4].metric("🔴 Severe", severe_count)
+        cols[5].metric("🟡 Warning", warning_count)
+        cols[6].metric("🟢 Clear", clear_count)
+        cols[7].metric("❓ Unknown", unknown_count)
+            
     # Determine map view
     # Use user-selected zoom level from sidebar, or default
     user_zoom = st.session_state.get('user_zoom', 10)
