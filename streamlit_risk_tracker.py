@@ -846,7 +846,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
     # Render map
     view_state = pdk.ViewState(latitude=center_lat, longitude=center_lon, zoom=zoom, pitch=0)
     deck = pdk.Deck(
-        map_style='https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+        map_style='mapbox://styles/mapbox/light-v11',
         initial_view_state=view_state, layers=layers,
         tooltip={'html': '{tooltip}', 'style': {'backgroundColor': 'steelblue', 'color': 'white'}}
     )
@@ -1056,29 +1056,51 @@ if show_anchorages or show_channels or show_fairways:
 
 st.sidebar.header("🔍 Filters")
 st.sidebar.subheader("Quick Filters")
-quick_filter = st.sidebar.radio("Preset", ["All Vessels", "Dark Fleet Focus", "Sanctioned Only", "Custom"], index=0, horizontal=True)
 
+# Store previous quick filter to detect changes
+if 'prev_quick_filter' not in st.session_state:
+    st.session_state.prev_quick_filter = "All Vessels"
+
+quick_filter = st.sidebar.radio("Preset", ["All Vessels", "Dark Fleet Focus", "Sanctioned Only", "Custom"], 
+                                index=0, horizontal=True, key="quick_filter_radio")
+
+# Determine defaults based on quick filter
 if quick_filter == "Dark Fleet Focus":
-    default_compliance, default_sanctions, default_types = ["Severe (🔴)", "Warning (🟡)"], ["Dark Activity"], ["Tanker", "Cargo"]
+    default_compliance = ["Severe (🔴)", "Warning (🟡)"]
+    default_sanctions = ["Dark Activity"]
+    default_types = ["Tanker", "Cargo"]
 elif quick_filter == "Sanctioned Only":
-    default_compliance, default_sanctions, default_types = ["Severe (🔴)"], ["UN Sanctions", "OFAC Sanctions"], ["All"]
-else:
-    default_compliance, default_sanctions, default_types = ["All"], ["All"], ["All"]
+    default_compliance = ["Severe (🔴)"]
+    default_sanctions = ["UN Sanctions", "OFAC Sanctions"]
+    default_types = ["All"]
+else:  # All Vessels or Custom
+    default_compliance = ["All"]
+    default_sanctions = ["All"]
+    default_types = ["All"]
+
+# If quick filter changed, reset the filter values
+if st.session_state.prev_quick_filter != quick_filter and quick_filter != "Custom":
+    st.session_state.compliance_filter = default_compliance
+    st.session_state.sanctions_filter = default_sanctions
+    st.session_state.types_filter = default_types
+    st.session_state.prev_quick_filter = quick_filter
+    st.rerun()
 
 st.sidebar.subheader("Compliance")
 compliance_options = ["All", "Severe (🔴)", "Warning (🟡)", "Clear (🟢)"]
 selected_compliance = st.sidebar.multiselect("Legal Status", compliance_options, 
-                                             default=default_compliance if quick_filter != "Custom" else ["All"],
+                                             default=st.session_state.get('compliance_filter', default_compliance),
                                              key="compliance_filter")
+
 sanction_options = ["All", "UN Sanctions", "OFAC Sanctions", "Dark Activity"]
 selected_sanctions = st.sidebar.multiselect("Sanctions & Dark Activity", sanction_options, 
-                                            default=default_sanctions if quick_filter != "Custom" else ["All"],
+                                            default=st.session_state.get('sanctions_filter', default_sanctions),
                                             key="sanctions_filter")
 
 st.sidebar.subheader("Vessel Type")
 vessel_types = ["All", "Cargo", "Tanker", "Passenger", "Tug", "Fishing", "High Speed Craft", "Pilot", "SAR", "Port Tender", "Law Enforcement", "Other", "Unknown"]
 selected_types = st.sidebar.multiselect("Types", vessel_types, 
-                                       default=default_types if quick_filter != "Custom" else ["All"],
+                                       default=st.session_state.get('types_filter', default_types),
                                        key="types_filter")
 
 st.sidebar.subheader("Navigation Status")
@@ -1093,8 +1115,7 @@ mmsi_imo_found = len([v for v in mmsi_cache.values() if v])
 vessel_count = len([k for k in st.session_state.get('vessel_positions', {}).keys() if k != '_last_update'])
 last_update_fmt = format_datetime(st.session_state.get('last_data_update', 'Never'))
 
-st.sidebar.markdown(f"""
-**Cached Vessels:** {vessel_count}
+st.sidebar.info(f"""**Cached Vessels:** {vessel_count}
 
 **Static Data:** {len(st.session_state.ship_static_cache)} vessels
 
@@ -1102,8 +1123,7 @@ st.sidebar.markdown(f"""
 
 **MMSI→IMO:** {mmsi_imo_found} found
 
-**Last Update:** {last_update_fmt}
-""")
+**Last Update:** {last_update_fmt}""")
 
 col1, col2 = st.sidebar.columns(2)
 if col1.button("🗑️ Clear All"):
