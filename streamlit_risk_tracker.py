@@ -1306,10 +1306,10 @@ def show_vessel_details_panel(imo: str, vessel_name: str):
         with col3:
             st.markdown(f"**Class:** {details.get('classification', 'N/A')}")
             legal = details.get('legal_overall', 0)
-            legal_emoji = '🔴 Severe' if legal == 2 else ('🟡 Caution' if legal == 1 else '🟢 Clear')
+            legal_emoji = '🔴 Severe' if legal == 2 else ('🟡 Warning' if legal == 1 else '🟢 Clear')
             st.markdown(f"**Legal Status:** {legal_emoji}")
             dark_ind = details.get('dark_activity_indicator', 0)
-            dark_emoji = '🔴 Severe' if dark_ind == 2 else ('🟡 Caution' if dark_ind == 1 else '🟢 Clear')
+            dark_emoji = '🔴 Severe' if dark_ind == 2 else ('🟡 Warning' if dark_ind == 1 else '🟢 Clear')
             st.markdown(f"**Dark Activity:** {dark_emoji}")
         
         # Ownership Information
@@ -1553,7 +1553,7 @@ quick_filter = st.sidebar.radio(
 
 # Set filter defaults based on quick filter
 if quick_filter == "Dark Fleet Focus":
-    default_compliance = ["Severe (🔴)", "Caution (🟡)"]
+    default_compliance = ["Severe (🔴)", "Warning (🟡)"]
     default_sanctions = ["UN Sanctions", "OFAC Sanctions", "Dark Activity"]
     default_types = ["Tanker", "Cargo"]
 elif quick_filter == "Sanctioned Only":
@@ -1567,7 +1567,7 @@ else:
 
 # Compliance filters
 st.sidebar.subheader("Compliance")
-compliance_options = ["All", "Severe (🔴)", "Caution (🟡)", "Clear (🟢)"]
+compliance_options = ["All", "Severe (🔴)", "Warning (🟡)", "Clear (🟢)"]
 selected_compliance = st.sidebar.multiselect(
     "Legal Status", 
     compliance_options, 
@@ -1657,7 +1657,7 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
     if selected_compliance and "All" not in selected_compliance:
         compliance_map = {
             "Severe (🔴)": 2,
-            "Caution (🟡)": 1,
+            "Warning (🟡)": 1,
             "Clear (🟢)": 0
         }
         selected_levels = [compliance_map[c] for c in selected_compliance if c in compliance_map]
@@ -1768,7 +1768,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
             severe_count = warning_count = clear_count = unknown_count = real_dims = 0
         
         cols[3].metric("🔴 Severe", severe_count)
-        cols[4].metric("🟡 Caution", warning_count)
+        cols[4].metric("🟡 Warning", warning_count)
         cols[5].metric("🟢 Clear", clear_count)
         cols[6].metric("❓ Unknown", unknown_count)
         cols[7].metric("📐 Real Dims", real_dims)
@@ -1867,13 +1867,13 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
         if len(df) == 0:
             st.info("No vessels to display. Adjust filters or refresh data.")
         else:
-            # Create a sort key that orders: Severe(2) > Caution(1) > Not Checked(-1) > Clear(0)
+            # Create a sort key that orders: Severe(2) > Warning(1) > Not Checked(-1) > Clear(0)
             # Map: 2->3, 1->2, -1->1, 0->0 for descending sort
             def compliance_sort_key(val):
                 if val == 2:
                     return 3  # Severe - highest
                 elif val == 1:
-                    return 2  # Caution
+                    return 2  # Warning
                 elif val == -1:
                     return 1  # Not checked
                 else:
@@ -2091,7 +2091,7 @@ st.sidebar.markdown("### 🎨 Legend")
 st.sidebar.markdown("""
 **Vessel Colors & Indicators:**
 - 🔴 **Severe** (2): Major compliance issue
-- 🟡 **Caution** (1): Warning flag
+- 🟡 **Warning** (1): Warning flag
 - 🟢 **Clear** (0): No issues
 - ⬜ **Gray** / ❓: Not checked (no IMO)
 
