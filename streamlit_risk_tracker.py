@@ -174,117 +174,6 @@ def get_vessel_type_category(type_code: int) -> str:
         return "Other"
 
 
-def estimate_vessel_dimensions(type_code: int) -> Tuple[float, float]:
-    """
-    Estimate vessel dimensions (length, width) based on AIS vessel type code.
-    Returns (length_meters, width_meters) typical for each vessel type.
-    
-    These are approximate averages for visualization purposes.
-    """
-    if type_code is None:
-        return (50, 10)  # Default small vessel
-    
-    # Cargo vessels (70-79)
-    if 70 <= type_code <= 79:
-        # Sub-categories within cargo
-        if type_code == 70:  # Cargo, all ships of this type
-            return (120, 18)
-        elif type_code == 71:  # Cargo, Hazardous category A
-            return (150, 22)
-        elif type_code == 72:  # Cargo, Hazardous category B
-            return (140, 20)
-        elif type_code == 73:  # Cargo, Hazardous category C
-            return (130, 19)
-        elif type_code == 74:  # Cargo, Hazardous category D
-            return (120, 18)
-        else:  # 75-79: Reserved/other cargo
-            return (100, 16)
-    
-    # Tankers (80-89)
-    elif 80 <= type_code <= 89:
-        if type_code == 80:  # Tanker, all ships of this type
-            return (180, 28)
-        elif type_code == 81:  # Tanker, Hazardous category A
-            return (250, 40)  # VLCC size
-        elif type_code == 82:  # Tanker, Hazardous category B
-            return (200, 32)
-        elif type_code == 83:  # Tanker, Hazardous category C
-            return (170, 26)
-        elif type_code == 84:  # Tanker, Hazardous category D
-            return (150, 24)
-        else:  # 85-89: Reserved/other tanker
-            return (140, 22)
-    
-    # Passenger vessels (60-69)
-    elif 60 <= type_code <= 69:
-        if type_code == 60:  # Passenger, all ships
-            return (200, 28)
-        elif type_code == 61:  # Passenger, Hazardous category A
-            return (300, 36)  # Large cruise ship
-        elif type_code == 62:  # Passenger, Hazardous category B
-            return (250, 32)
-        elif type_code == 63:  # Passenger, Hazardous category C
-            return (180, 25)
-        elif type_code == 64:  # Passenger, Hazardous category D
-            return (150, 22)
-        elif type_code == 69:  # Passenger, No additional information
-            return (100, 16)  # Ferry size
-        else:
-            return (120, 20)
-    
-    # Tugs (31, 32, 52)
-    elif type_code in [31, 32, 52]:
-        return (30, 10)
-    
-    # Fishing (30)
-    elif type_code == 30:
-        return (25, 7)
-    
-    # High Speed Craft (40-49)
-    elif 40 <= type_code <= 49:
-        return (40, 10)
-    
-    # Pilot vessel (50)
-    elif type_code == 50:
-        return (20, 6)
-    
-    # SAR (51)
-    elif type_code == 51:
-        return (30, 8)
-    
-    # Port Tender (53)
-    elif type_code == 53:
-        return (25, 7)
-    
-    # Law Enforcement (55)
-    elif type_code == 55:
-        return (35, 8)
-    
-    # Dredger (33)
-    elif type_code == 33:
-        return (80, 18)
-    
-    # Military (35)
-    elif type_code == 35:
-        return (120, 15)
-    
-    # Sailing (36)
-    elif type_code == 36:
-        return (15, 5)
-    
-    # Pleasure craft (37)
-    elif type_code == 37:
-        return (20, 6)
-    
-    # Other (90-99)
-    elif 90 <= type_code <= 99:
-        return (60, 12)
-    
-    # Default
-    else:
-        return (50, 10)
-
-
 def load_cache() -> Tuple[Dict, Dict, Dict, Dict]:
     """Load cached ship, risk, MMSI-to-IMO, and vessel position data from disk"""
     ship_cache = {}
@@ -1067,12 +956,12 @@ class AISTracker:
             length = dim_a + dim_b
             width = dim_c + dim_d
             
-            # If no dimensions available, estimate based on vessel type
+            # Check if we have real dimensions
             has_real_dimensions = (length > 0 and width > 0)
             if not has_real_dimensions:
-                est_length, est_width = estimate_vessel_dimensions(ship_type)
-                length = est_length
-                width = est_width
+                # Use fixed default for unknown dimensions
+                length = 50
+                width = 10
             
             # Get last_seen timestamp
             last_seen_str = ship_data.get('last_seen', pos.get('timestamp', ''))
@@ -1258,10 +1147,11 @@ def create_vessel_layers(df: pd.DataFrame, zoom: float = 10) -> List[pdk.Layer]:
         else:
             legal_emoji = '❓'
         
-        # Dimension text
-        dim_text = f"{vessel_length:.0f}m x {vessel_width:.0f}m"
-        if row['length'] <= 0:
-            dim_text += " (est)"
+        # Dimension text - show (est.) if no real dimensions
+        if row['has_dimensions']:
+            dim_text = f"{vessel_length:.0f}m x {vessel_width:.0f}m"
+        else:
+            dim_text = f"{vessel_length:.0f}m x {vessel_width:.0f}m (est.)"
         
         tooltip_text = (
             f"<b>{row['name']}</b><br/>"
@@ -1599,8 +1489,6 @@ selected_expiry = st.sidebar.selectbox(
     help="Vessels not detected within this time will be removed from display"
 )
 vessel_expiry_hours = expiry_options[selected_expiry]
-st.sidebar.caption("💡 Run multiple refreshes to accumulate vessels. Old vessels auto-expire.")
-st.sidebar.caption(coverage_info[selected_coverage])
 
 # Maritime Zones
 st.sidebar.header("🗺️ Maritime Zones")
@@ -1765,8 +1653,8 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
     
     filtered_df = df.copy()
     
-    # Compliance filters (skip if "All" is selected)
-    if "All" not in selected_compliance and selected_compliance:
+    # Compliance filters (skip if "All" is selected OR nothing selected)
+    if selected_compliance and "All" not in selected_compliance:
         compliance_map = {
             "Severe (🔴)": 2,
             "Caution (🟡)": 1,
@@ -1776,8 +1664,8 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
         if selected_levels:
             filtered_df = filtered_df[filtered_df['legal_overall'].isin(selected_levels)]
     
-    # Sanctions & Dark Activity filter (skip if "All" is selected)
-    if "All" not in selected_sanctions and selected_sanctions:
+    # Sanctions & Dark Activity filter (skip if "All" is selected OR nothing selected)
+    if selected_sanctions and "All" not in selected_sanctions:
         sanction_mask = pd.Series([False] * len(filtered_df), index=filtered_df.index)
         if "UN Sanctions" in selected_sanctions:
             sanction_mask = sanction_mask | (filtered_df['un_sanction'] == 2)
@@ -1787,12 +1675,12 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
             sanction_mask = sanction_mask | (filtered_df['dark_activity'] >= 1)  # Include both warning (1) and severe (2)
         filtered_df = filtered_df[sanction_mask]
     
-    # Vessel type filter (skip if "All" is selected)
-    if "All" not in selected_types and selected_types:
+    # Vessel type filter (skip if "All" is selected OR nothing selected)
+    if selected_types and "All" not in selected_types:
         filtered_df = filtered_df[filtered_df['type_name'].isin(selected_types)]
     
-    # Navigation status filter (skip if "All" is selected)
-    if "All" not in selected_nav_statuses and selected_nav_statuses:
+    # Navigation status filter (skip if "All" is selected OR nothing selected)
+    if selected_nav_statuses and "All" not in selected_nav_statuses:
         filtered_df = filtered_df[filtered_df['nav_status_name'].isin(selected_nav_statuses)]
     
     # Static data filter
@@ -1979,8 +1867,22 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
         if len(df) == 0:
             st.info("No vessels to display. Adjust filters or refresh data.")
         else:
-            # Sort by legal_overall (most severe first) then by speed
-            display_df = df.sort_values(['legal_overall', 'speed'], ascending=[False, False]).copy()
+            # Create a sort key that orders: Severe(2) > Caution(1) > Not Checked(-1) > Clear(0)
+            # Map: 2->3, 1->2, -1->1, 0->0 for descending sort
+            def compliance_sort_key(val):
+                if val == 2:
+                    return 3  # Severe - highest
+                elif val == 1:
+                    return 2  # Caution
+                elif val == -1:
+                    return 1  # Not checked
+                else:
+                    return 0  # Clear - lowest
+            
+            display_df = df.copy()
+            display_df['_sort_key'] = display_df['legal_overall'].apply(compliance_sort_key)
+            display_df = display_df.sort_values(['_sort_key', 'name'], ascending=[False, True])
+            display_df = display_df.drop(columns=['_sort_key'])
             
             # Format boolean/status columns with emojis
             display_df['has_static_display'] = display_df['has_static'].map({True: '✅', False: '❌'})
@@ -2002,12 +1904,10 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
             display_df['owner_un_display'] = display_df['owner_un'].apply(format_compliance_value)
             display_df['sts_display'] = display_df['sts_partner_non_compliance'].apply(format_compliance_value)
             
-            display_df['speed_fmt'] = display_df['speed'].apply(lambda x: f"{x:.1f}")
-            
             # Select and rename columns for display - organized by category
             # Core info | Ship Sanctions | Owner Sanctions | Dark/STS | Port Calls | Flag
             table_df = display_df[[
-                'name', 'imo', 'mmsi', 'type_name', 'speed_fmt', 
+                'name', 'imo', 'mmsi', 'type_name', 'nav_status_name', 
                 'legal_display', 'un_display', 'ofac_display', 'eu_display', 'bes_display', 'swiss_display',
                 'owner_un_display', 'owner_ofac_display',
                 'dark_display', 'sts_display',
@@ -2015,7 +1915,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, is_cached: bool = Fa
                 'flag_sanc_display', 'flag_disp_display'
             ]].copy()
             table_df.columns = [
-                'Name', 'IMO', 'MMSI', 'Type', 'Spd',
+                'Name', 'IMO', 'MMSI', 'Type', 'Nav Status',
                 'Legal', 'UN', 'OFAC', 'EU', 'UK', 'Swiss',
                 'Own UN', 'Own OFAC',
                 'Dark', 'STS',
@@ -2187,27 +2087,18 @@ if not st.session_state.data_loaded and not auto_refresh:
 
 # Legend
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 🎨 Color Legend")
+st.sidebar.markdown("### 🎨 Legend")
 st.sidebar.markdown("""
-- 🔴 **Red**: Severe compliance issue
-- 🟡 **Yellow**: Caution
-- 🟢 **Green**: Clear
-- ⬜ **Gray**: Not checked (no IMO)
-""")
+**Vessel Colors & Indicators:**
+- 🔴 **Severe** (2): Major compliance issue
+- 🟡 **Caution** (1): Warning flag
+- 🟢 **Clear** (0): No issues
+- ⬜ **Gray** / ❓: Not checked (no IMO)
 
-st.sidebar.markdown("### 🚨 Compliance Indicators")
-st.sidebar.markdown("""
-- ✅ Clear (0)
-- 🟡 Caution (1)
-- 🔴 Severe (2)
-- ❓ Not checked
-""")
-
-st.sidebar.markdown("### 🗺️ Zone Colors")
-st.sidebar.markdown("""
-- 🔵 **Cyan**: Anchorages
-- 🟡 **Yellow**: Channels
-- 🟠 **Orange**: Fairways
+**Zone Colors:**
+- 🔵 Cyan: Anchorages
+- 🟡 Yellow: Channels
+- 🟠 Orange: Fairways
 """)
 
 st.sidebar.markdown("---")
