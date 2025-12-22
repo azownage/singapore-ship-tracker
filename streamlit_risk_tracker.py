@@ -1546,17 +1546,17 @@ st.sidebar.header("🔍 Filters")
 st.sidebar.subheader("Quick Filters")
 quick_filter = st.sidebar.radio(
     "Preset",
-    ["All Vessels", "Dark Fleet Focus", "Sanctioned Only", "Custom"],
+    ["All Vessels", "Dark Fleet", "Sanctioned", "Custom"],
     index=0,
     horizontal=True
 )
 
 # Set filter defaults based on quick filter
-if quick_filter == "Dark Fleet Focus":
+if quick_filter == "Dark Fleet":
     default_compliance = ["Severe (🔴)", "Caution (🟡)"]
     default_sanctions = ["Dark Activity"]
     default_types = ["Tanker", "Cargo"]
-elif quick_filter == "Sanctioned Only":
+elif quick_filter == "Sanctioned":
     default_compliance = ["Severe (🔴)"]
     default_sanctions = ["UN Sanctions", "OFAC Sanctions"]
     default_types = ["All"]
