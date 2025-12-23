@@ -420,6 +420,52 @@ class SPShipsComplianceAPI:
             st.error(f"⚠️ S&P Ships API error for MMSI {mmsi}: {str(e)}")
         
         return {}
+    
+    def get_risk_indicators_by_imo_batch(self, imo_numbers: List[str], status_placeholder=None) -> Dict[str, Dict]:
+        """Get risk indicators for multiple IMOs (up to 100) from Risk API"""
+        if not imo_numbers:
+            return {}
+        
+        risk_api_url = "https://webservices.maritime.spglobal.com/RiskAndCompliance/RisksByImos"
+        
+        # Fetch in batches of 100
+        results = {}
+        for i in range(0, len(imo_numbers), 100):
+            batch = imo_numbers[i:i+100]
+            imos_param = ','.join(batch)
+            
+            try:
+                if status_placeholder:
+                    status_placeholder.text(f"🔍 Fetching risk indicators... ({i+1}-{min(i+100, len(imo_numbers))} of {len(imo_numbers)})")
+                
+                response = requests.get(
+                    f"{risk_api_url}?imos={imos_param}",
+                    auth=(self.username, self.password),
+                    timeout=30
+                )
+                
+                if response.status_code == 200:
+                    risk_data = response.json()
+                    
+                    # risk_data is a list of risk indicators
+                    for item in risk_data:
+                        imo = str(item.get('lrno', ''))
+                        if imo:
+                            results[imo] = {
+                                'psc_defects': item.get('pscDefectsNarrative', ''),
+                                'psc_detentions': item.get('pscDetentionsNarrative', ''),
+                                'risk_cached_at': datetime.now(SGT).isoformat()
+                            }
+                else:
+                    st.warning(f"⚠️ Risk API returned status {response.status_code} for batch {i//100 + 1}")
+                
+                time.sleep(0.2)  # Rate limiting
+            
+            except Exception as e:
+                st.warning(f"⚠️ Risk API error for batch {i//100 + 1}: {str(e)}")
+                continue
+        
+        return results
 
 class AISTracker:
     """AIS data collection and vessel tracking"""
@@ -592,6 +638,7 @@ class AISTracker:
                 'ofac_advisory': -1, 'port_call_12m': -1, 'dark_activity': -1,
                 'sts_partner_non_compliance': -1, 'flag_disputed': -1, 'flag_sanctioned': -1,
                 'flag_sanctioned_historical': -1, 'security_legal_dispute': -1,
+                'psc_defects': '', 'psc_detentions': '',
                 'compliance_checked': False,
                 'color': self.get_ship_color(-1)
             })
@@ -626,11 +673,17 @@ class AISTracker:
         if valid_imos and sp_api:
             # Use batch IMO lookup - pass status_placeholder for progress updates
             compliance_data = sp_api.get_ship_compliance_by_imo_batch(valid_imos, status_placeholder)
+            
+            # Fetch Risk API data (PSC defects/detentions) for all valid IMOs
+            risk_data = sp_api.get_risk_indicators_by_imo_batch(valid_imos, status_placeholder)
         else:
             compliance_data = {imo: compliance_cache.get(imo, {}) for imo in valid_imos}
+            risk_data = {}
         
         for idx, row in df.iterrows():
             imo = str(row['imo'])
+            
+            # Apply compliance data (new or cached)
             if imo in compliance_data and compliance_data[imo]:
                 comp = compliance_data[imo]
                 legal_overall = comp.get('legal_overall', -1)
@@ -654,6 +707,37 @@ class AISTracker:
                 df.at[idx, 'security_legal_dispute'] = int(comp.get('security_legal_dispute', 0) or 0)
                 df.at[idx, 'compliance_checked'] = True
                 df.at[idx, 'color'] = self.get_ship_color(legal_overall)
+            elif imo in compliance_cache and compliance_cache[imo]:
+                # Use cached data for vessels that have disappeared from AIS but were seen before
+                comp = compliance_cache[imo]
+                legal_overall = comp.get('legal_overall', -1)
+                if isinstance(legal_overall, str):
+                    legal_overall = int(legal_overall) if legal_overall.isdigit() else -1
+                
+                # Preserve S&P ship details from cache
+                df.at[idx, 'sp_ship_type'] = comp.get('sp_ship_type', '')
+                df.at[idx, 'sp_flag'] = comp.get('sp_flag', '')
+                df.at[idx, 'sp_status'] = comp.get('sp_status', '')
+                df.at[idx, 'legal_overall'] = legal_overall
+                df.at[idx, 'un_sanction'] = int(comp.get('ship_un_sanction', 0) or 0)
+                df.at[idx, 'ofac_sanction'] = int(comp.get('ship_ofac_sanction', 0) or 0)
+                df.at[idx, 'ofac_non_sdn'] = int(comp.get('ship_ofac_non_sdn', 0) or 0)
+                df.at[idx, 'ofac_advisory'] = int(comp.get('ship_ofac_advisory', 0) or 0)
+                df.at[idx, 'port_call_12m'] = int(comp.get('port_call_12m', 0) or 0)
+                df.at[idx, 'dark_activity'] = int(comp.get('dark_activity', 0) or 0)
+                df.at[idx, 'sts_partner_non_compliance'] = int(comp.get('sts_partner_non_compliance', 0) or 0)
+                df.at[idx, 'flag_disputed'] = int(comp.get('flag_disputed', 0) or 0)
+                df.at[idx, 'flag_sanctioned'] = int(comp.get('flag_sanctioned', 0) or 0)
+                df.at[idx, 'flag_sanctioned_historical'] = int(comp.get('flag_sanctioned_historical', 0) or 0)
+                df.at[idx, 'security_legal_dispute'] = int(comp.get('security_legal_dispute', 0) or 0)
+                df.at[idx, 'compliance_checked'] = True
+                df.at[idx, 'color'] = self.get_ship_color(legal_overall)
+            
+            # Apply Risk API data (PSC defects/detentions)
+            if imo in risk_data and risk_data[imo]:
+                risk = risk_data[imo]
+                df.at[idx, 'psc_defects'] = risk.get('psc_defects', '')
+                df.at[idx, 'psc_detentions'] = risk.get('psc_detentions', '')
         
         return df
 
@@ -954,7 +1038,8 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
             'sp_ship_type', 'sp_flag', 'sp_status',
             'legal_display', 'un_display', 'ofac_display', 'ofac_non_sdn_display',
             'ofac_advisory_display', 'port12m_display', 'dark_display', 'sts_display',
-            'flag_disp_display', 'flag_sanc_display', 'flag_hist_display', 'security_display'
+            'flag_disp_display', 'flag_sanc_display', 'flag_hist_display', 'security_display',
+            'psc_defects', 'psc_detentions'
         ]].copy()
         
         # Rename columns for display
@@ -963,7 +1048,8 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
             'S&P Type', 'S&P Flag', 'S&P Status',
             'Legal', 'UN', 'OFAC', 'OFAC Non-SDN',
             'OFAC Advisory', 'Port 12m', 'Dark', 'STS',
-            'Flag Disp', 'Flag Sanc', 'Flag Hist', 'Security'
+            'Flag Disp', 'Flag Sanc', 'Flag Hist', 'Security',
+            'PSC Defects', 'PSC Detentions'
         ]
         
         # Configure columns
@@ -973,7 +1059,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         row_count = len(table_df)
         header_height = 38
         row_height = 35
-        dynamic_height = header_height + (row_height * min(row_count, 20))  # Max 20 rows visible
+        dynamic_height = header_height + (row_height * min(row_count, 10))  # Max 10 rows visible
         
         # Use session-based counter for stable unique keys across reruns
         if 'table_render_count' not in st.session_state:
@@ -992,12 +1078,12 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
             selected_mmsi = display_df.iloc[selected_idx]['mmsi']
             selected_imo = display_df.iloc[selected_idx]['imo']
             
-            col1, col2, col3 = st.columns([3, 1, 1])
-            col1.info(f"Selected: **{table_df.iloc[selected_idx]['Name']}** (IMO: {table_df.iloc[selected_idx]['IMO']}, MMSI: {table_df.iloc[selected_idx]['MMSI']})")
-            if col2.button("🗺️ View on Map"):
-                st.session_state.selected_vessel = selected_mmsi
-                st.rerun()
-            if col3.button("📋 View Details"):
+            # Auto-apply filter to map to show selected vessel
+            st.session_state.selected_vessel = selected_mmsi
+            
+            col1, col2 = st.columns([4, 1])
+            col1.info(f"🎯 Selected & Filtered on Map: **{table_df.iloc[selected_idx]['Name']}** (IMO: {table_df.iloc[selected_idx]['IMO']}, MMSI: {table_df.iloc[selected_idx]['MMSI']})")
+            if col2.button("📋 View Details"):
                 st.session_state.show_details_imo = selected_imo
                 st.session_state.show_details_name = table_df.iloc[selected_idx]['Name']
 
