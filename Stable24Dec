@@ -1104,11 +1104,18 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         row_height = 35
         dynamic_height = header_height + (row_height * min(row_count, 10))  # Max 10 rows visible
         
-        # Use session-based counter for stable unique keys across reruns
-        if 'table_render_count' not in st.session_state:
-            st.session_state.table_render_count = 0
-        st.session_state.table_render_count += 1
-        table_key = f"vessel_table_{st.session_state.table_render_count}"
+        # Use stable key for dataframe to preserve selection across reruns
+        table_key = "vessel_table_stable"
+        
+        # Get currently selected vessels from session state
+        current_selection = st.session_state.get('selected_vessels', [])
+        
+        # Find row indices for currently selected vessels
+        default_rows = []
+        if current_selection:
+            for idx, row in display_df.iterrows():
+                if row['mmsi'] in current_selection:
+                    default_rows.append(idx)
         
         selected_rows = st.dataframe(
             table_df, use_container_width=True, height=dynamic_height,
@@ -1224,7 +1231,7 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
 
 # ============= STREAMLIT UI =============
 st.title("🚢 Singapore Ship Tracker")
-st.markdown("Real-time vessel tracking with S&P Maritime compliance screening")
+st.markdown("Real-time vessel tracking with compliance screening and risk indicators")
 
 # Sidebar Configuration
 
