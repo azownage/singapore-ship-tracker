@@ -701,6 +701,7 @@ class AISTracker:
             risk_data = {imo: psc_cache.get(imo, {}) for imo in valid_imos if imo in psc_cache}
         
         for idx, row in df.iterrows():
+            imo = str(row['imo'])
             
             # Apply compliance data (new or cached)
             if imo in compliance_data and compliance_data[imo]:
