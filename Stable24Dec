@@ -1,7 +1,7 @@
 """
-Singapore AIS Tracker with S&P Maritime Risk Intelligence
-Real-time vessel tracking with compliance and risk indicators
-v9 - Streamlined: Display mode toggle, improved sorting, persistent map view
+Singapore Ship Tracker with S&P Maritime Risk Intelligence
+Vessel tracking with compliance and risk indicators
+v10 - Multi-select checkboxes, PSC defects/detentions from Risk API
 """
 
 import streamlit as st
@@ -19,7 +19,7 @@ import pickle
 import os
 import math
 
-st.set_page_config(page_title="Singapore Ship Risk Tracker", page_icon="🚢", layout="wide")
+st.set_page_config(page_title="Singapore Ship Tracker", page_icon="🚢", layout="wide")
 
 # Constants
 SGT = timezone(timedelta(hours=8))
@@ -192,8 +192,8 @@ if 'ship_static_cache' not in st.session_state:
     st.session_state.last_data_update = vessel_positions.get('_last_update', None)
     st.session_state.collection_in_progress = False
 
-if 'selected_vessel' not in st.session_state:
-    st.session_state.selected_vessel = None
+if 'selected_vessels' not in st.session_state:
+    st.session_state.selected_vessels = []
 if 'show_details_imo' not in st.session_state:
     st.session_state.show_details_imo = None
     st.session_state.show_details_name = None
@@ -430,13 +430,17 @@ class SPShipsComplianceAPI:
         
         # Fetch in batches of 100
         results = {}
+        total_vessels = len(imo_numbers)
+        
         for i in range(0, len(imo_numbers), 100):
             batch = imo_numbers[i:i+100]
             imos_param = ','.join(batch)
             
             try:
+                # Show progress similar to compliance screening
                 if status_placeholder:
-                    status_placeholder.text(f"🔍 Fetching risk indicators... ({i+1}-{min(i+100, len(imo_numbers))} of {len(imo_numbers)})")
+                    progress_pct = int((i / total_vessels) * 100)
+                    status_placeholder.text(f"🔍 Fetching risk indicators for {total_vessels} vessels... {progress_pct}%")
                 
                 response = requests.get(
                     f"{risk_api_url}?imos={imos_param}",
@@ -451,9 +455,11 @@ class SPShipsComplianceAPI:
                     for item in risk_data:
                         imo = str(item.get('lrno', ''))
                         if imo:
+                            psc_def = item.get('pscDefectsNarrative', '')
+                            psc_det = item.get('pscDetentionsNarrative', '')
                             results[imo] = {
-                                'psc_defects': item.get('pscDefectsNarrative', ''),
-                                'psc_detentions': item.get('pscDetentionsNarrative', ''),
+                                'psc_defects': psc_def,
+                                'psc_detentions': psc_det,
                                 'risk_cached_at': datetime.now(SGT).isoformat()
                             }
                 else:
@@ -464,6 +470,12 @@ class SPShipsComplianceAPI:
             except Exception as e:
                 st.warning(f"⚠️ Risk API error for batch {i//100 + 1}: {str(e)}")
                 continue
+        
+        # Show completion
+        if status_placeholder:
+            status_placeholder.text(f"🔍 Fetching risk indicators for {total_vessels} vessels... 100%")
+            time.sleep(0.3)
+            status_placeholder.empty()
         
         return results
 
@@ -670,15 +682,23 @@ class AISTracker:
                         valid_imos.append(found_imo)
         
         compliance_cache = st.session_state.get('risk_data_cache', {})
+        psc_cache = st.session_state.get('psc_risk_cache', {})  # Separate cache for PSC data
+        
         if valid_imos and sp_api:
             # Use batch IMO lookup - pass status_placeholder for progress updates
             compliance_data = sp_api.get_ship_compliance_by_imo_batch(valid_imos, status_placeholder)
             
             # Fetch Risk API data (PSC defects/detentions) for all valid IMOs
             risk_data = sp_api.get_risk_indicators_by_imo_batch(valid_imos, status_placeholder)
+            
+            # Cache the PSC risk data for later use
+            if risk_data:
+                psc_cache.update(risk_data)
+                st.session_state.psc_risk_cache = psc_cache
         else:
+            # Use cached data when sp_api is None (displaying cached vessels)
             compliance_data = {imo: compliance_cache.get(imo, {}) for imo in valid_imos}
-            risk_data = {}
+            risk_data = {imo: psc_cache.get(imo, {}) for imo in valid_imos if imo in psc_cache}
         
         for idx, row in df.iterrows():
             imo = str(row['imo'])
@@ -906,11 +926,27 @@ def apply_filters(df: pd.DataFrame, selected_compliance, selected_sanctions,
     if selected_sanctions and "All" not in selected_sanctions:
         sanction_mask = pd.Series([False] * len(filtered_df), index=filtered_df.index)
         if "UN Sanctions" in selected_sanctions:
-            sanction_mask = sanction_mask | (filtered_df['un_sanction'] == 2)
+            sanction_mask = sanction_mask | (filtered_df['un_sanction'].isin([1, 2]))
         if "OFAC Sanctions" in selected_sanctions:
-            sanction_mask = sanction_mask | (filtered_df['ofac_sanction'] == 2)
+            sanction_mask = sanction_mask | (filtered_df['ofac_sanction'].isin([1, 2]))
+        if "OFAC Non-SDN" in selected_sanctions:
+            sanction_mask = sanction_mask | (filtered_df['ofac_non_sdn'].isin([1, 2]))
+        if "OFAC Advisory" in selected_sanctions:
+            sanction_mask = sanction_mask | (filtered_df['ofac_advisory'].isin([1, 2]))
+        if "Port Call (12m)" in selected_sanctions:
+            sanction_mask = sanction_mask | (filtered_df['port_call_12m'].isin([1, 2]))
         if "Dark Activity" in selected_sanctions:
-            sanction_mask = sanction_mask | (filtered_df['dark_activity'] >= 1)
+            sanction_mask = sanction_mask | (filtered_df['dark_activity'].isin([1, 2]))
+        if "STS Non-Compliance" in selected_sanctions:
+            sanction_mask = sanction_mask | (filtered_df['sts_partner_non_compliance'].isin([1, 2]))
+        if "Flag Disputed" in selected_sanctions:
+            sanction_mask = sanction_mask | (filtered_df['flag_disputed'].isin([1, 2]))
+        if "Flag Sanctioned" in selected_sanctions:
+            sanction_mask = sanction_mask | (filtered_df['flag_sanctioned'].isin([1, 2]))
+        if "Flag Hist Sanctioned" in selected_sanctions:
+            sanction_mask = sanction_mask | (filtered_df['flag_sanctioned_historical'].isin([1, 2]))
+        if "Security/Legal Dispute" in selected_sanctions:
+            sanction_mask = sanction_mask | (filtered_df['security_legal_dispute'].isin([1, 2]))
         filtered_df = filtered_df[sanction_mask]
     
     if selected_types and "All" not in selected_types:
@@ -960,17 +996,19 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         st.session_state.map_center_initialized = True
         st.session_state.map_center = {"lat": 1.28, "lon": 103.85, "zoom": user_zoom}
     
-    # Always use stored map center if available (unless viewing a specific vessel)
-    if st.session_state.selected_vessel and len(df) > 0:
-        vessel = df[df['mmsi'] == st.session_state.selected_vessel]
-        if len(vessel) > 0:
-            center_lat = vessel.iloc[0]['latitude']
-            center_lon = vessel.iloc[0]['longitude']
+    # Always use stored map center if available (unless viewing specific vessels)
+    if st.session_state.selected_vessels and len(df) > 0:
+        # Filter to show only selected vessels
+        selected_df = df[df['mmsi'].isin(st.session_state.selected_vessels)]
+        if len(selected_df) > 0:
+            # Center on first selected vessel
+            center_lat = selected_df.iloc[0]['latitude']
+            center_lon = selected_df.iloc[0]['longitude']
             zoom = max(user_zoom, 14)
-            # Update stored position when viewing specific vessel
+            # Update stored position when viewing specific vessels
             st.session_state.map_center = {"lat": center_lat, "lon": center_lon, "zoom": zoom}
         else:
-            # Vessel not in filtered results, use stored position
+            # Vessels not in filtered results, use stored position
             center_lat = st.session_state.map_center.get('lat', 1.28)
             center_lon = st.session_state.map_center.get('lon', 103.85)
             zoom = st.session_state.map_center.get('zoom', user_zoom)
@@ -979,6 +1017,11 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         center_lat = st.session_state.map_center.get('lat', 1.28)
         center_lon = st.session_state.map_center.get('lon', 103.85)
         zoom = st.session_state.map_center.get('zoom', user_zoom)
+    
+    # Filter dataframe for map display based on checkbox selection
+    map_df = df.copy()
+    if st.session_state.selected_vessels:
+        map_df = map_df[map_df['mmsi'].isin(st.session_state.selected_vessels)]
     
     # Create map layers
     layers = []
@@ -995,7 +1038,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         if layer:
             layers.append(layer)
     
-    vessel_layers = create_vessel_layers(df, zoom=zoom, display_mode=vessel_display_mode)
+    vessel_layers = create_vessel_layers(map_df, zoom=zoom, display_mode=vessel_display_mode)
     layers.extend(vessel_layers)
     
     # Render map - use static key to maintain state across filter changes
@@ -1069,23 +1112,33 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         
         selected_rows = st.dataframe(
             table_df, use_container_width=True, height=dynamic_height,
-            hide_index=True, on_select="rerun", selection_mode="single-row",
+            hide_index=True, on_select="rerun", selection_mode="multi-row",
             column_config=column_config, key=table_key
         )
         
+        # Handle multi-row selection - filter map to show only checked vessels
         if selected_rows and selected_rows.selection and selected_rows.selection.rows:
-            selected_idx = selected_rows.selection.rows[0]
-            selected_mmsi = display_df.iloc[selected_idx]['mmsi']
-            selected_imo = display_df.iloc[selected_idx]['imo']
+            selected_indices = selected_rows.selection.rows
+            selected_mmsis = [display_df.iloc[idx]['mmsi'] for idx in selected_indices]
             
-            # Auto-apply filter to map to show selected vessel
-            st.session_state.selected_vessel = selected_mmsi
+            # Store selected MMSIs for map filtering
+            st.session_state.selected_vessels = selected_mmsis
             
-            col1, col2 = st.columns([4, 1])
-            col1.info(f"🎯 Selected & Filtered on Map: **{table_df.iloc[selected_idx]['Name']}** (IMO: {table_df.iloc[selected_idx]['IMO']}, MMSI: {table_df.iloc[selected_idx]['MMSI']})")
-            if col2.button("📋 View Details"):
-                st.session_state.show_details_imo = selected_imo
-                st.session_state.show_details_name = table_df.iloc[selected_idx]['Name']
+            # Show info about selected vessels
+            num_selected = len(selected_indices)
+            if num_selected == 1:
+                idx = selected_indices[0]
+                st.info(f"✅ {num_selected} vessel selected & filtered on map: **{table_df.iloc[idx]['Name']}** (IMO: {table_df.iloc[idx]['IMO']})")
+            else:
+                vessel_names = [table_df.iloc[idx]['Name'] for idx in selected_indices[:3]]
+                if num_selected > 3:
+                    names_display = ", ".join(vessel_names) + f" and {num_selected - 3} more"
+                else:
+                    names_display = ", ".join(vessel_names)
+                st.info(f"✅ {num_selected} vessels selected & filtered on map: {names_display}")
+        else:
+            # No selection - clear filter
+            st.session_state.selected_vessels = []
 
 def display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, 
                        show_anchorages, show_channels, show_fairways, 
@@ -1170,7 +1223,7 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
               st.session_state.get('mmsi_to_imo_cache', {}), st.session_state.get('vessel_positions', {}))
 
 # ============= STREAMLIT UI =============
-st.title("🚢 Singapore Ship Risk Tracker")
+st.title("🚢 Singapore Ship Tracker")
 st.markdown("Real-time vessel tracking with S&P Maritime compliance screening")
 
 # Sidebar Configuration
@@ -1283,8 +1336,12 @@ selected_compliance = st.sidebar.multiselect("Legal Overall", compliance_options
                                              default=st.session_state.get('compliance_filter', default_compliance),
                                              key="compliance_filter")
 
-sanction_options = ["All", "UN Sanctions", "OFAC Sanctions", "Dark Activity"]
-selected_sanctions = st.sidebar.multiselect("Sanctions & Dark Activity", sanction_options, 
+sanction_options = ["All", 
+                    "UN Sanctions", "OFAC Sanctions", "OFAC Non-SDN", "OFAC Advisory",
+                    "Port Call (12m)", "Dark Activity", "STS Non-Compliance",
+                    "Flag Disputed", "Flag Sanctioned", "Flag Hist Sanctioned", 
+                    "Security/Legal Dispute"]
+selected_sanctions = st.sidebar.multiselect("Compliance Indicators (Warning/Severe)", sanction_options, 
                                             default=st.session_state.get('sanctions_filter', default_sanctions),
                                             key="sanctions_filter")
 
