@@ -1050,17 +1050,16 @@ try:
     sp_username = st.secrets["sp_maritime"]["username"]
     sp_password = st.secrets["sp_maritime"]["password"]
     ais_api_key = st.secrets.get("aisstream", {}).get("api_key", "")
-    st.sidebar.success("🔐 Using credentials from secrets")
 except:
-    with st.sidebar.expander("🔐 API Credentials", expanded=False):
-        st.warning("⚠️ Credentials should be in Streamlit Secrets")
+    with st.sidebar.expander("🔐 API Credentials", expanded=True):
         sp_username = st.text_input("S&P Username", type="password")
         sp_password = st.text_input("S&P Password", type="password")
         ais_api_key = st.text_input("AISStream API Key", type="password")
 
 st.sidebar.header("📡 AIS Settings")
-duration = st.sidebar.slider("AIS collection time (seconds)", 10, 120, 60)
+duration = st.sidebar.slider("AIS collection time (seconds)", 10, 300, 60)
 enable_compliance = st.sidebar.checkbox("Enable S&P compliance screening", value=True)
+show_static_only = st.sidebar.checkbox("Ships with static data only", value=False, key="static_filter")
 
 st.sidebar.subheader("Coverage Area")
 coverage_options = {
@@ -1118,15 +1117,15 @@ if 'prev_quick_filter' not in st.session_state:
 if 'refresh_in_progress' not in st.session_state:
     st.session_state.refresh_in_progress = False
 
-quick_filter = st.sidebar.radio("Preset", ["All Vessels", "Dark Fleet Focus", "Sanctioned Only", "Custom"], 
+quick_filter = st.sidebar.radio("Preset", ["All Vessels", "Dark Vessels", "Sanctioned Vessels", "Custom"], 
                                 index=0, horizontal=True, key="quick_filter_radio")
 
 # Determine defaults based on quick filter
-if quick_filter == "Dark Fleet Focus":
+if quick_filter == "Dark Vessels":
     default_compliance = ["Severe (🔴)", "Warning (🟡)"]
     default_sanctions = ["Dark Activity"]
     default_types = ["Tanker", "Cargo"]
-elif quick_filter == "Sanctioned Only":
+elif quick_filter == "Sanctioned Vessels":
     default_compliance = ["Severe (🔴)"]
     default_sanctions = ["UN Sanctions", "OFAC Sanctions"]
     default_types = ["All"]
@@ -1166,7 +1165,6 @@ st.sidebar.subheader("Navigation Status")
 nav_status_options = ["All"] + list(NAV_STATUS_NAMES.values())
 selected_nav_statuses = st.sidebar.multiselect("Status", nav_status_options, default=["All"],
                                                key="nav_status_filter")
-show_static_only = st.sidebar.checkbox("Ships with static data only", value=False, key="static_filter")
 
 st.sidebar.header("💾 Cache Statistics")
 mmsi_cache = st.session_state.get('mmsi_to_imo_cache', {})
@@ -1193,7 +1191,8 @@ if st.sidebar.button("🗑️ Clear All Cache"):
     st.rerun()
 
 # Control buttons
-col1, col2, col3 = st.columns([1, 1, 4])
+# Control buttons - put them close together
+col1, col2 = st.columns([1, 1])
 
 displayed_in_this_run = False
 
