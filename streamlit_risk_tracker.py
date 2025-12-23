@@ -282,7 +282,8 @@ class SPShipsComplianceAPI:
             return results
         
         # Fetch compliance data for uncached MMSIs (this also caches IMOs)
-        st.info(f"🔍 Looking up IMO for {len(uncached_mmsis)} vessels via MMSI...")
+        info_placeholder = st.empty()
+        info_placeholder.info(f"🔍 Looking up IMO for {len(uncached_mmsis)} vessels via MMSI...")
         progress_bar = st.progress(0)
         for i, mmsi in enumerate(uncached_mmsis):
             imo = self.get_imo_by_mmsi(mmsi)
@@ -290,6 +291,7 @@ class SPShipsComplianceAPI:
                 results[mmsi] = imo
             progress_bar.progress((i + 1) / len(uncached_mmsis))
         progress_bar.empty()
+        info_placeholder.empty()
         
         return results
     
@@ -326,7 +328,8 @@ class SPShipsComplianceAPI:
         if not uncached_imos:
             return {imo: cache[imo] for imo in imo_numbers}
         
-        st.info(f"🔍 Fetching compliance data for {len(uncached_imos)} vessels...")
+        info_placeholder = st.empty()
+        info_placeholder.info(f"🔍 Fetching compliance data for {len(uncached_imos)} vessels...")
         try:
             # Batch up to 100 IMOs per call
             batches = [uncached_imos[i:i+100] for i in range(0, len(uncached_imos), 100)]
@@ -366,6 +369,8 @@ class SPShipsComplianceAPI:
             save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
         except Exception as e:
             st.error(f"⚠️ S&P Ships API error: {str(e)}")
+        finally:
+            info_placeholder.empty()
         
         return {imo: cache.get(imo, {}) for imo in imo_numbers}
     
@@ -990,7 +995,7 @@ def display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones
     cached_positions = st.session_state.vessel_positions
     last_update = cached_positions.get('_last_update', 'Unknown')
     tracker = AISTracker(use_cached_positions=True)
-    df = tracker.get_dataframe_with_compliance(sp_api=None, ships_api=None, expiry_hours=vessel_expiry_hours)
+    df = tracker.get_dataframe_with_compliance(sp_api=None, expiry_hours=vessel_expiry_hours)
     
     if df.empty:
         st.info("ℹ️ No cached vessel data. Click 'Refresh Now' to collect AIS data.")
