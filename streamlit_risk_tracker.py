@@ -870,20 +870,22 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         # Sort by legal_overall: default descending order (2, 1, 0, -1) from top to bottom
         display_df = df.copy().sort_values(['legal_overall', 'name'], ascending=[False, True])
         
-        # Create sortable emoji strings using invisible Unicode characters for sorting
-        # U+2003 = EM SPACE (different widths = different sort order)
-        # This makes emojis sort correctly: 2 > 1 > 0 > -1 (descending)
+        # Create sortable emoji strings using zero-width Unicode characters
+        # These are invisible but affect sort order
+        # U+200D = ZERO WIDTH JOINER (higher unicode = sorts later)
+        # U+200C = ZERO WIDTH NON-JOINER
+        # U+200B = ZERO WIDTH SPACE (lower unicode = sorts earlier)
         def create_sortable_emoji(value):
             emoji = format_compliance_value(value)
-            # Add invisible prefix that sorts correctly
-            if value == 2:
-                return f"\u2003\u2003{emoji}"  # Two spaces = sorts first descending
-            elif value == 1:
-                return f"\u2003{emoji}"  # One space = sorts second
-            elif value == 0:
-                return emoji  # No space = sorts third
-            else:  # -1
-                return f"\u200B{emoji}"  # Zero-width space = sorts last
+            # Use different zero-width characters to control sort order
+            if value == 2:  # Severe - should sort first in descending
+                return f"\u200D\u200D\u200D{emoji}"  # Three ZWJ
+            elif value == 1:  # Warning
+                return f"\u200D\u200D{emoji}"  # Two ZWJ
+            elif value == 0:  # Clear
+                return f"\u200D{emoji}"  # One ZWJ
+            else:  # -1 Unknown - should sort last in descending
+                return f"\u200B{emoji}"  # ZWS (lowest unicode)
         
         # Create sortable display columns
         display_df['legal_display'] = display_df['legal_overall'].apply(create_sortable_emoji)
