@@ -190,12 +190,19 @@ if 'ship_static_cache' not in st.session_state:
     st.session_state.vessel_positions = vessel_positions
     st.session_state.last_save = time.time()
     st.session_state.last_data_update = vessel_positions.get('_last_update', None)
+    st.session_state.collection_in_progress = False
 
 if 'selected_vessel' not in st.session_state:
     st.session_state.selected_vessel = None
 if 'show_details_imo' not in st.session_state:
     st.session_state.show_details_imo = None
     st.session_state.show_details_name = None
+
+# Early exit: If collection is in progress and user changed filters, just show cached data with new filters
+if st.session_state.get('collection_in_progress', False):
+    st.sidebar.warning("🔄 Data collection in progress... Showing cached data with your new filters.")
+    # The filters will be read below and applied to cached data
+    # We'll skip the normal flow and just display cached data at the end
 
 # API Classes
 class SPShipsComplianceAPI:
@@ -1018,14 +1025,38 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
     """Collect data and update display"""
     sp_api = SPShipsComplianceAPI(sp_username, sp_password) if enable_compliance and sp_username and sp_password else None
     
-    with st.spinner(f'🔄 Collecting AIS data for {duration} seconds...'):
-        tracker = AISTracker(use_cached_positions=True)
-        if ais_api_key:
+    # Display cached data first to prevent blur
+    if 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
+        display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
+                           show_channels, show_fairways, selected_compliance, selected_sanctions, 
+                           selected_types, selected_nav_statuses, show_static_only)
+    
+    # Show status message in sidebar
+    status_placeholder = st.sidebar.empty()
+    status_placeholder.info(f'🔄 Collecting AIS data for {duration} seconds... (Do not change filters)')
+    
+    # Mark collection as in progress to prevent filter changes
+    st.session_state.collection_in_progress = True
+    
+    # Collect data without spinner
+    tracker = AISTracker(use_cached_positions=True)
+    if ais_api_key:
+        try:
             asyncio.run(tracker.collect_data(duration, ais_api_key, coverage_bbox))
-        else:
-            st.warning("⚠️ No AISStream API key provided.")
+        except Exception as e:
+            st.session_state.collection_in_progress = False
+            status_placeholder.error(f"⚠️ Error collecting AIS data: {e}")
             return
-        df = tracker.get_dataframe_with_compliance(sp_api, expiry_hours=vessel_expiry_hours)
+    else:
+        st.session_state.collection_in_progress = False
+        status_placeholder.warning("⚠️ No AISStream API key provided.")
+        return
+    
+    df = tracker.get_dataframe_with_compliance(sp_api, expiry_hours=vessel_expiry_hours)
+    
+    # Mark collection as complete
+    st.session_state.collection_in_progress = False
+    status_placeholder.empty()  # Clear the status message
     
     if df.empty:
         st.warning("⚠️ No ships detected. Try increasing collection time or check API key.")
@@ -1214,23 +1245,37 @@ if 'auto_refresh_enabled' in st.session_state and st.session_state.auto_refresh_
         auto_refresh_triggered = True
         st.session_state.last_refresh_time = time.time()
 
-if col1.button("🔄 Refresh Now", type="primary", use_container_width=True) or auto_refresh_triggered:
-    st.session_state.refresh_in_progress = True  # Prevent filter changes from interrupting
-    st.session_state.last_refresh_time = time.time()
-    update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_username, sp_password,
-                  vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
-                  show_channels, show_fairways, selected_compliance, selected_sanctions, 
-                  selected_types, selected_nav_statuses, show_static_only)
-    st.session_state.data_loaded = True
-    st.session_state.refresh_in_progress = False  # Reset flag after refresh completes
-    displayed_in_this_run = True
+# Skip button logic if collection is in progress (user changed filters during collection)
+if not st.session_state.get('collection_in_progress', False):
+    if col1.button("🔄 Refresh Now", type="primary", use_container_width=True) or auto_refresh_triggered:
+        st.session_state.refresh_in_progress = True  # Prevent filter changes from interrupting
+        st.session_state.last_refresh_time = time.time()
+        update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_username, sp_password,
+                      vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
+                      show_channels, show_fairways, selected_compliance, selected_sanctions, 
+                      selected_types, selected_nav_statuses, show_static_only)
+        st.session_state.data_loaded = True
+        st.session_state.refresh_in_progress = False  # Reset flag after refresh completes
+        displayed_in_this_run = True
+        st.stop()  # Stop execution here to prevent showing cached data again below
 
-if col2.button("📦 View Cached", use_container_width=True):
-    display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
-                       show_channels, show_fairways, selected_compliance, selected_sanctions, 
-                       selected_types, selected_nav_statuses, show_static_only)
-    st.session_state.data_loaded = True
-    displayed_in_this_run = True
+    if col2.button("📦 View Cached", use_container_width=True):
+        display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
+                           show_channels, show_fairways, selected_compliance, selected_sanctions, 
+                           selected_types, selected_nav_statuses, show_static_only)
+        st.session_state.data_loaded = True
+        displayed_in_this_run = True
+else:
+    # Collection in progress - disable buttons and show cached data with new filters
+    col1.button("🔄 Refresh Now", type="primary", use_container_width=True, disabled=True)
+    col2.button("📦 View Cached", use_container_width=True, disabled=True)
+    # Display cached data with the new filters
+    if 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
+        display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
+                           show_channels, show_fairways, selected_compliance, selected_sanctions, 
+                           selected_types, selected_nav_statuses, show_static_only)
+        displayed_in_this_run = True
+        st.stop()  # Stop here to prevent further execution
 
 # Show vessel details if requested
 if st.session_state.get('show_details_imo') and sp_username and sp_password:
