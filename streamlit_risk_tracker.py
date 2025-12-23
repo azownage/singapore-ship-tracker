@@ -283,16 +283,11 @@ class SPShipsComplianceAPI:
             return results
         
         # Fetch compliance data for uncached MMSIs (this also caches IMOs)
-        info_placeholder = st.empty()
-        info_placeholder.info(f"🔍 Looking up IMO for {len(uncached_mmsis)} vessels via MMSI...")
-        progress_bar = st.progress(0)
-        for i, mmsi in enumerate(uncached_mmsis):
+        # No separate message needed - this will be shown as part of "Fetching compliance data"
+        for mmsi in uncached_mmsis:
             imo = self.get_imo_by_mmsi(mmsi)
             if imo:
                 results[mmsi] = imo
-            progress_bar.progress((i + 1) / len(uncached_mmsis))
-        progress_bar.empty()
-        info_placeholder.empty()
         
         return results
     
@@ -1015,7 +1010,7 @@ def display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones
 def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_username, sp_password,
                   vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
                   show_channels, show_fairways, selected_compliance, selected_sanctions, 
-                  selected_types, selected_nav_statuses, show_static_only):
+                  selected_types, selected_nav_statuses, show_static_only, status_placeholder):
     """Collect data and update display"""
     sp_api = SPShipsComplianceAPI(sp_username, sp_password) if enable_compliance and sp_username and sp_password else None
     
@@ -1025,9 +1020,8 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
                            show_channels, show_fairways, selected_compliance, selected_sanctions, 
                            selected_types, selected_nav_statuses, show_static_only)
     
-    # Show status message in sidebar
-    status_placeholder = st.sidebar.empty()
-    status_placeholder.info(f'🔄 Collecting AIS data for {duration} seconds... (Do not change filters)')
+    # Show status message below buttons
+    status_placeholder.info(f'🔄 Collecting AIS data for {duration} seconds...')
     
     # Mark collection as in progress and store duration
     st.session_state.collection_in_progress = True
@@ -1047,6 +1041,9 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
         status_placeholder.warning("⚠️ No AISStream API key provided.")
         return
     
+    # Show fetching compliance data message
+    status_placeholder.info('🔍 Fetching compliance data from S&P...')
+    
     df = tracker.get_dataframe_with_compliance(sp_api, expiry_hours=vessel_expiry_hours)
     
     # Mark collection as complete
@@ -1054,14 +1051,14 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
     status_placeholder.empty()  # Clear the status message
     
     if df.empty:
-        st.warning("⚠️ No ships detected. Try increasing collection time or check API key.")
+        status_placeholder.warning("⚠️ No ships detected. Try increasing collection time or check API key.")
         return
     
     df = apply_filters(df, selected_compliance, selected_sanctions, selected_types, 
                       selected_nav_statuses, show_static_only)
     
     if df.empty:
-        st.warning("⚠️ No vessels match filters. Adjust filters to see vessels.")
+        status_placeholder.warning("⚠️ No vessels match filters. Adjust filters to see vessels.")
     
     last_update = st.session_state.get('last_data_update', datetime.now(SGT).isoformat())
     display_vessel_data(df, last_update, vessel_display_mode, maritime_zones, 
@@ -1240,6 +1237,9 @@ if 'auto_refresh_enabled' in st.session_state and st.session_state.auto_refresh_
         auto_refresh_triggered = True
         st.session_state.last_refresh_time = time.time()
 
+# Create status placeholder below buttons
+status_placeholder = st.empty()
+
 # Skip button logic if collection is in progress (user changed filters during collection)
 if not st.session_state.get('collection_in_progress', False):
     if col1.button("🔄 Refresh Now", type="primary", use_container_width=True) or auto_refresh_triggered:
@@ -1248,7 +1248,7 @@ if not st.session_state.get('collection_in_progress', False):
         update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_username, sp_password,
                       vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
                       show_channels, show_fairways, selected_compliance, selected_sanctions, 
-                      selected_types, selected_nav_statuses, show_static_only)
+                      selected_types, selected_nav_statuses, show_static_only, status_placeholder)
         st.session_state.data_loaded = True
         st.session_state.refresh_in_progress = False  # Reset flag after refresh completes
         displayed_in_this_run = True
@@ -1265,9 +1265,9 @@ else:
     col1.button("🔄 Refresh Now", type="primary", use_container_width=True, disabled=True)
     col2.button("📦 View Cached", use_container_width=True, disabled=True)
     
-    # Show the progress indicator (same as in update_display)
+    # Show the progress indicator below buttons
     if 'collection_duration' in st.session_state:
-        st.sidebar.info(f'🔄 Collecting AIS data for {st.session_state.collection_duration} seconds... (Do not change filters)')
+        status_placeholder.info(f'🔄 Collecting AIS data for {st.session_state.collection_duration} seconds...')
     
     # Display cached data with the new filters
     if 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
