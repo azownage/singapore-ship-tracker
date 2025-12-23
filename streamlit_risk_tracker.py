@@ -292,8 +292,11 @@ class SPShipsComplianceAPI:
         return results
     
     def parse_compliance_from_ship_detail(self, ship_detail: Dict) -> Dict:
-        """Extract compliance indicators from APSShipDetail"""
+        """Extract compliance indicators and ship details from APSShipDetail"""
         return {
+            'sp_ship_type': ship_detail.get('ShiptypeLevel5', ''),
+            'sp_flag': ship_detail.get('FlagName', ''),
+            'sp_status': ship_detail.get('ShipStatus', ''),
             'legal_overall': int(ship_detail.get('LegalOverall', -1)),
             'ship_un_sanction': int(ship_detail.get('ShipUNSanctionList', -1)),
             'ship_ofac_sanction': int(ship_detail.get('ShipOFACSanctionList', -1)),
@@ -584,6 +587,7 @@ class AISTracker:
                 'call_sign': static.get('call_sign', ''),
                 'has_static': bool(static.get('name')),
                 'last_seen': ship_data.get('last_seen', pos.get('timestamp', '')),
+                'sp_ship_type': '', 'sp_flag': '', 'sp_status': '',
                 'legal_overall': -1, 'un_sanction': -1, 'ofac_sanction': -1, 'ofac_non_sdn': -1,
                 'ofac_advisory': -1, 'port_call_12m': -1, 'dark_activity': -1,
                 'sts_partner_non_compliance': -1, 'flag_disputed': -1, 'flag_sanctioned': -1,
@@ -633,6 +637,9 @@ class AISTracker:
                 if isinstance(legal_overall, str):
                     legal_overall = int(legal_overall) if legal_overall.isdigit() else -1
                 
+                df.at[idx, 'sp_ship_type'] = comp.get('sp_ship_type', '')
+                df.at[idx, 'sp_flag'] = comp.get('sp_flag', '')
+                df.at[idx, 'sp_status'] = comp.get('sp_status', '')
                 df.at[idx, 'legal_overall'] = legal_overall
                 df.at[idx, 'un_sanction'] = int(comp.get('ship_un_sanction', 0) or 0)
                 df.at[idx, 'ofac_sanction'] = int(comp.get('ship_ofac_sanction', 0) or 0)
@@ -944,6 +951,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         # Create table with display columns only
         table_df = display_df[[
             'name', 'imo', 'mmsi', 'type_name', 'nav_status_name',
+            'sp_ship_type', 'sp_flag', 'sp_status',
             'legal_display', 'un_display', 'ofac_display', 'ofac_non_sdn_display',
             'ofac_advisory_display', 'port12m_display', 'dark_display', 'sts_display',
             'flag_disp_display', 'flag_sanc_display', 'flag_hist_display', 'security_display'
@@ -952,7 +960,8 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         # Rename columns for display
         table_df.columns = [
             'Name', 'IMO', 'MMSI', 'Type', 'Nav Status',
-            'Legal Overall', 'UN', 'OFAC', 'OFAC Non-SDN',
+            'S&P Type', 'S&P Flag', 'S&P Status',
+            'Legal', 'UN', 'OFAC', 'OFAC Non-SDN',
             'OFAC Advisory', 'Port 12m', 'Dark', 'STS',
             'Flag Disp', 'Flag Sanc', 'Flag Hist', 'Security'
         ]
