@@ -1037,12 +1037,6 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
     """Collect data and update display"""
     sp_api = SPShipsComplianceAPI(sp_username, sp_password) if enable_compliance and sp_username and sp_password else None
     
-    # Display cached data first to prevent blur
-    if 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
-        display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
-                           show_channels, show_fairways, selected_compliance, selected_sanctions, 
-                           selected_types, selected_nav_statuses, show_static_only)
-    
     # Show initial status message below buttons
     status_placeholder.info(f'🔄 Collecting AIS data... 0%')
     
@@ -1076,9 +1070,11 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
     # get_dataframe_with_compliance will show its own detailed progress message with vessel count and percentage
     df = tracker.get_dataframe_with_compliance(sp_api, expiry_hours=vessel_expiry_hours, status_placeholder=status_placeholder)
     
-    # Mark collection as complete
+    # Clear the status message
+    status_placeholder.empty()
+    
+    # Mark collection as complete AFTER clearing status (so filter changes don't override S&P message)
     st.session_state.collection_in_progress = False
-    status_placeholder.empty()  # Clear the status message
     
     if df.empty:
         status_placeholder.warning("⚠️ No ships detected. Try increasing collection time or check API key.")
@@ -1259,11 +1255,12 @@ if auto_refresh:
         elapsed = time.time() - st.session_state.last_refresh_time
         remaining = max(0, st.session_state.refresh_interval - elapsed)
         st.sidebar.info(f"⏳ Next refresh in {int(remaining)}s")
-        if remaining <= 1:
-            time.sleep(0.5)
+        # Only rerun every 5 seconds to update countdown, not every second
+        if remaining > 5:
+            time.sleep(5)
             st.rerun()
-        else:
-            time.sleep(1)
+        elif remaining > 0:
+            time.sleep(remaining)
             st.rerun()
 
 # Legend (place before buttons so it always displays)
@@ -1329,13 +1326,12 @@ if not st.session_state.get('collection_in_progress', False):
         st.session_state.data_loaded = True
         displayed_in_this_run = True
 else:
-    # Collection in progress - disable buttons, show progress indicator, and display cached data with new filters
+    # Collection in progress - disable buttons and display cached data with new filters
     col1.button("🔄 Refresh Now", type="primary", use_container_width=True, disabled=True)
     col2.button("📦 View Cached", use_container_width=True, disabled=True)
     
-    # Show the progress indicator below buttons
-    if 'collection_duration' in st.session_state:
-        status_placeholder.info(f'🔄 Collecting AIS data for {st.session_state.collection_duration} seconds...')
+    # The actual progress message is already being shown by the collection process
+    # Don't override it here - just display cached data with new filters
     
     # Display cached data with the new filters
     if 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
