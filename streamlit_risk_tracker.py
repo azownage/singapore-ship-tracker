@@ -361,7 +361,11 @@ class SPShipsComplianceAPI:
                 progress_pct = int(((batch_idx + 1) / len(batches)) * 100)
                 info_placeholder.info(f"🔍 Fetching compliance data for {total_vessels} vessels ({len(uncached_imos)} new)... {progress_pct}%")
                 
-                time.sleep(0.5)  # Rate limiting
+                # Force Streamlit to update the UI
+                if batch_idx < len(batches) - 1:  # Don't rerun on last batch
+                    time.sleep(0.1)  # Brief pause to show message
+                else:
+                    time.sleep(0.5)  # Longer pause on last batch
             
             # Mark IMOs that weren't returned as checked but not found
             for imo in uncached_imos:
@@ -376,8 +380,7 @@ class SPShipsComplianceAPI:
             save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
         except Exception as e:
             st.error(f"⚠️ S&P Ships API error: {str(e)}")
-        finally:
-            info_placeholder.empty()
+        # Don't clear the placeholder here - let it stay visible until new data is displayed
         
         return {imo: cache.get(imo, {}) for imo in imo_numbers}
     
@@ -1070,10 +1073,7 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
     # get_dataframe_with_compliance will show its own detailed progress message with vessel count and percentage
     df = tracker.get_dataframe_with_compliance(sp_api, expiry_hours=vessel_expiry_hours, status_placeholder=status_placeholder)
     
-    # Clear the status message
-    status_placeholder.empty()
-    
-    # Mark collection as complete AFTER clearing status (so filter changes don't override S&P message)
+    # Mark collection as complete AFTER data is fetched
     st.session_state.collection_in_progress = False
     
     if df.empty:
@@ -1089,6 +1089,10 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
     last_update = st.session_state.get('last_data_update', datetime.now(SGT).isoformat())
     display_vessel_data(df, last_update, vessel_display_mode, maritime_zones, 
                        show_anchorages, show_channels, show_fairways, is_cached=False)
+    
+    # Clear the status message after data is displayed
+    status_placeholder.empty()
+    
     save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache,
               st.session_state.get('mmsi_to_imo_cache', {}), st.session_state.get('vessel_positions', {}))
 
@@ -1286,6 +1290,9 @@ st.sidebar.markdown("""
 st.sidebar.markdown("---")
 st.sidebar.caption("Data: AISStream.io + S&P Global Maritime")
 
+# Create status placeholder in main area FIRST (before any messages)
+status_placeholder = st.empty()
+
 # Initialize flag for tracking if data was displayed in this run
 displayed_in_this_run = False
 
@@ -1302,12 +1309,11 @@ if 'auto_refresh_enabled' in st.session_state and st.session_state.auto_refresh_
         auto_refresh_triggered = True
         st.session_state.last_refresh_time = time.time()
 
-# Create status placeholder in main area
-status_placeholder = st.empty()
-
 # Handle Refresh Now button click or auto-refresh trigger
 if not st.session_state.get('collection_in_progress', False):
     if refresh_button or auto_refresh_triggered:
+        # Clear any previous messages FIRST
+        status_placeholder.empty()
         st.session_state.refresh_in_progress = True  # Prevent filter changes from interrupting
         st.session_state.last_refresh_time = time.time()
         update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_username, sp_password,
@@ -1344,4 +1350,4 @@ if not displayed_in_this_run and not st.session_state.get('collection_in_progres
                            selected_types, selected_nav_statuses)
     else:
         # No cache data on initial load (only show if not collecting)
-        st.info("ℹ️ No cached vessel data. Click 'Refresh Now' to collect AIS data.")
+        status_placeholder.info("ℹ️ No cached vessel data. Click 'Refresh Now' to collect AIS data.")
