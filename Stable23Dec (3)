@@ -652,13 +652,17 @@ def create_vessel_layers(df: pd.DataFrame, zoom: float = 10, display_mode: str =
         legal_emoji = {2: '🔴', 1: '🟡', 0: '🟢'}.get(row['legal_overall'], '❓')
         dim_text = f"{vessel_length:.0f}m x {vessel_width:.0f}m" + ("" if row['has_dimensions'] else " (est.)")
         
+        # Format last seen time
+        last_seen_text = format_datetime(row['last_seen']) if row['last_seen'] else 'Unknown'
+        
         tooltip_text = (
             f"<b>{row['name']}</b><br/>"
             f"IMO: {row['imo']}<br/>MMSI: {row['mmsi']}<br/>"
             f"Type: {row['type_name']}<br/>Size: {dim_text}<br/>"
             f"Heading: {row['heading']:.0f}°<br/>Speed: {row['speed']:.1f} kts<br/>"
             f"Status: {row['nav_status_name']}<br/>Compliance: {legal_emoji}<br/>"
-            f"Dest: {row['destination']}"
+            f"Dest: {row['destination']}<br/>"
+            f"Last Seen: {last_seen_text}"
         )
         
         vessel_data.append({
@@ -677,7 +681,7 @@ def create_vessel_layers(df: pd.DataFrame, zoom: float = 10, display_mode: str =
             get_radius=150, radius_min_pixels=3, radius_max_pixels=8,
             pickable=True, auto_highlight=True
         ))
-    else:  # "Ship Shapes"
+    else:  # "Shapes"
         vessel_polygons = []
         for v in vessel_data:
             polygon = create_vessel_polygon(
@@ -1044,7 +1048,6 @@ st.title("🚢 Singapore Ship Risk Tracker")
 st.markdown("Real-time vessel tracking with S&P Maritime compliance screening")
 
 # Sidebar Configuration
-st.sidebar.header("⚙️ Configuration")
 
 try:
     sp_username = st.secrets["sp_maritime"]["username"]
@@ -1087,7 +1090,7 @@ st.sidebar.header("🔍 Map View")
 # Vessel Display Mode
 vessel_display_mode = st.sidebar.radio(
     "Vessel Display Mode",
-    options=["Dots", "Ship Shapes"],
+    options=["Dots", "Shapes"],
     index=st.session_state.get('vessel_display_mode_index', 0)
 )
 st.session_state.vessel_display_mode_index = 0 if vessel_display_mode == "Dots" else 1
@@ -1173,12 +1176,14 @@ vessel_count = len([k for k in st.session_state.get('vessel_positions', {}).keys
 last_update_fmt = format_datetime(st.session_state.get('last_data_update', 'Never'))
 
 st.sidebar.info(f"""**Cached Vessels:** {vessel_count}
-**Static  
-Data:** {len(st.session_state.ship_static_cache)} vessels
+
+**Static Data:** {len(st.session_state.ship_static_cache)} vessels
+
 **Compliance:** {len(st.session_state.risk_data_cache)} vessels
+
 **MMSI→IMO:** {mmsi_imo_found} found
-**Last  
-Update:** {last_update_fmt}""")
+
+**Last Update:** {last_update_fmt}""")
 
 if st.sidebar.button("🗑️ Clear All Cache"):
     st.session_state.ship_static_cache = {}
@@ -1191,12 +1196,12 @@ if st.sidebar.button("🗑️ Clear All Cache"):
     st.rerun()
 
 # Control buttons
-# Control buttons - put them close together
-col1, col2 = st.columns([1, 1])
+# Control buttons - put them side by side with equal width
+col1, col2 = st.columns(2)
 
 displayed_in_this_run = False
 
-if col1.button("🔄 Refresh Now", type="primary"):
+if col1.button("🔄 Refresh Now", type="primary", use_container_width=True):
     st.session_state.refresh_in_progress = True  # Prevent filter changes from interrupting
     st.session_state.last_refresh_time = time.time()
     update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_username, sp_password,
@@ -1207,7 +1212,7 @@ if col1.button("🔄 Refresh Now", type="primary"):
     st.session_state.refresh_in_progress = False  # Reset flag after refresh completes
     displayed_in_this_run = True
 
-if col2.button("📦 View Cached"):
+if col2.button("📦 View Cached", use_container_width=True):
     display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
                        show_channels, show_fairways, selected_compliance, selected_sanctions, 
                        selected_types, selected_nav_statuses, show_static_only)
