@@ -1018,15 +1018,8 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         center_lon = st.session_state.map_center.get('lon', 103.85)
         zoom = st.session_state.map_center.get('zoom', user_zoom)
     
-    # Filter dataframe for map display based on checkbox selection
+    # Filter dataframe for map display - ALWAYS show all vessels
     map_df = df.copy()
-    if st.session_state.selected_vessels:
-        # Debug: Show what we're filtering
-        st.write(f"🔍 Filtering map to {len(st.session_state.selected_vessels)} vessels: {st.session_state.selected_vessels}")
-        map_df = map_df[map_df['mmsi'].isin(st.session_state.selected_vessels)]
-        st.write(f"📍 Map will show {len(map_df)} vessels")
-    else:
-        st.write(f"📍 No filter - showing all {len(map_df)} vessels")
     
     # Create map layers
     layers = []
@@ -1112,50 +1105,28 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         # Use stable key for dataframe to preserve selection across reruns
         table_key = "vessel_table_stable"
         
-        # Get currently selected vessels from session state
-        current_selection = st.session_state.get('selected_vessels', [])
-        
-        # Find row indices for currently selected vessels
-        default_rows = []
-        if current_selection:
-            for idx, row in display_df.iterrows():
-                if row['mmsi'] in current_selection:
-                    default_rows.append(idx)
-        
         selected_rows = st.dataframe(
             table_df, use_container_width=True, height=dynamic_height,
-            hide_index=True, on_select="rerun", selection_mode="multi-row",
+            hide_index=True, on_select="rerun", selection_mode="single-row",
             column_config=column_config, key=table_key
         )
         
-        # Handle multi-row selection - filter map to show only checked vessels
+        # Handle single-row selection - zoom to vessel but show all vessels on map
         if selected_rows and selected_rows.selection and selected_rows.selection.rows:
             selected_indices = selected_rows.selection.rows
-            selected_mmsis = [display_df.iloc[idx]['mmsi'] for idx in selected_indices]
-            
-            st.write(f"🔍 Table selection detected: {len(selected_indices)} rows")
-            st.write(f"🔍 MMSIs to save: {selected_mmsis}")
-            
-            # Store selected MMSIs for map filtering
-            st.session_state.selected_vessels = selected_mmsis
-            
-            st.write(f"✅ Saved to session_state.selected_vessels: {st.session_state.selected_vessels}")
-            
-            # Show info about selected vessels
-            num_selected = len(selected_indices)
-            if num_selected == 1:
+            if len(selected_indices) > 0:
                 idx = selected_indices[0]
-                st.info(f"✅ {num_selected} vessel selected & filtered on map: **{table_df.iloc[idx]['Name']}** (IMO: {table_df.iloc[idx]['IMO']})")
-            else:
-                vessel_names = [table_df.iloc[idx]['Name'] for idx in selected_indices[:3]]
-                if num_selected > 3:
-                    names_display = ", ".join(vessel_names) + f" and {num_selected - 3} more"
-                else:
-                    names_display = ", ".join(vessel_names)
-                st.info(f"✅ {num_selected} vessels selected & filtered on map: {names_display}")
+                selected_mmsi = display_df.iloc[idx]['mmsi']
+                
+                # Store selected MMSI for zoom centering (but not filtering)
+                st.session_state.selected_vessels = [selected_mmsi]
+                
+                # Show info about selected vessel
+                vessel_name = table_df.iloc[idx]['Name']
+                vessel_imo = table_df.iloc[idx]['IMO']
+                st.info(f"🎯 Zoomed to: **{vessel_name}** (IMO: {vessel_imo}) | All vessels still visible on map")
         else:
-            st.write("🔍 No selection detected - clearing filter")
-            # No selection - clear filter
+            # No selection - clear stored selection
             st.session_state.selected_vessels = []
 
 def display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, 
