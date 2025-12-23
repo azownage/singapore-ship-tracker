@@ -428,41 +428,28 @@ class SPShipsComplianceAPI:
         
         risk_api_url = "https://webservices.maritime.spglobal.com/RiskAndCompliance/RisksByImos"
         
-        # Log API call details
-        if status_placeholder:
-            status_placeholder.text(f"📡 Risk API URL: {risk_api_url}")
-            st.write(f"DEBUG: Calling Risk API with {len(imo_numbers)} IMOs")
-            st.write(f"DEBUG: First 5 IMOs: {imo_numbers[:5]}")
-        
         # Fetch in batches of 100
         results = {}
+        total_vessels = len(imo_numbers)
+        
         for i in range(0, len(imo_numbers), 100):
             batch = imo_numbers[i:i+100]
             imos_param = ','.join(batch)
             
             try:
+                # Show progress similar to compliance screening
                 if status_placeholder:
-                    status_placeholder.text(f"🔍 Fetching risk indicators... ({i+1}-{min(i+100, len(imo_numbers))} of {len(imo_numbers)})")
-                
-                full_url = f"{risk_api_url}?imos={imos_param}"
-                st.write(f"DEBUG: Full URL: {full_url[:200]}...")
+                    progress_pct = int((i / total_vessels) * 100)
+                    status_placeholder.text(f"🔍 Fetching risk indicators for {total_vessels} vessels... {progress_pct}%")
                 
                 response = requests.get(
-                    full_url,
+                    f"{risk_api_url}?imos={imos_param}",
                     auth=(self.username, self.password),
                     timeout=30
                 )
                 
-                st.write(f"DEBUG: Response status code: {response.status_code}")
-                
                 if response.status_code == 200:
                     risk_data = response.json()
-                    st.write(f"DEBUG: Response type: {type(risk_data)}, Length: {len(risk_data) if isinstance(risk_data, list) else 'N/A'}")
-                    
-                    # Log first item structure
-                    if isinstance(risk_data, list) and len(risk_data) > 0:
-                        st.write(f"DEBUG: First item keys: {list(risk_data[0].keys())[:10]}")
-                        st.write(f"DEBUG: First item sample: lrno={risk_data[0].get('lrno')}, pscDefectsNarrative={risk_data[0].get('pscDefectsNarrative')}, pscDetentionsNarrative={risk_data[0].get('pscDetentionsNarrative')}")
                     
                     # risk_data is a list of risk indicators
                     for item in risk_data:
@@ -475,26 +462,20 @@ class SPShipsComplianceAPI:
                                 'psc_detentions': psc_det,
                                 'risk_cached_at': datetime.now(SGT).isoformat()
                             }
-                            # Debug: Show first result
-                            if len(results) == 1:
-                                st.write(f"DEBUG: First result stored - IMO {imo}: Defects='{psc_def}', Detentions='{psc_det}'")
-                                if status_placeholder:
-                                    status_placeholder.text(f"✅ Risk API fetched: IMO {imo} - Defects: {psc_def}, Detentions: {psc_det}")
                 else:
                     st.warning(f"⚠️ Risk API returned status {response.status_code} for batch {i//100 + 1}")
-                    st.write(f"DEBUG: Response text: {response.text[:500]}")
                 
                 time.sleep(0.2)  # Rate limiting
             
             except Exception as e:
-                st.error(f"⚠️ Risk API error for batch {i//100 + 1}: {str(e)}")
-                import traceback
-                st.write(f"DEBUG: Full traceback:\n{traceback.format_exc()}")
+                st.warning(f"⚠️ Risk API error for batch {i//100 + 1}: {str(e)}")
                 continue
         
-        st.write(f"DEBUG: Total results collected: {len(results)}")
-        if results:
-            st.write(f"DEBUG: Sample result IMOs: {list(results.keys())[:5]}")
+        # Show completion
+        if status_placeholder:
+            status_placeholder.text(f"🔍 Fetching risk indicators for {total_vessels} vessels... 100%")
+            time.sleep(0.3)
+            status_placeholder.empty()
         
         return results
 
@@ -708,56 +689,18 @@ class AISTracker:
             compliance_data = sp_api.get_ship_compliance_by_imo_batch(valid_imos, status_placeholder)
             
             # Fetch Risk API data (PSC defects/detentions) for all valid IMOs
-            if status_placeholder:
-                status_placeholder.text(f"🔍 Starting Risk API call for {len(valid_imos)} IMOs...")
             risk_data = sp_api.get_risk_indicators_by_imo_batch(valid_imos, status_placeholder)
-            if status_placeholder:
-                status_placeholder.text(f"✅ Risk API returned data for {len(risk_data)} vessels")
             
             # Cache the PSC risk data for later use
             if risk_data:
                 psc_cache.update(risk_data)
                 st.session_state.psc_risk_cache = psc_cache
-            
-            # Log first 3 results for debugging
-            if risk_data:
-                debug_msgs = []
-                for idx, (imo, data) in enumerate(list(risk_data.items())[:3]):
-                    msg = f"DEBUG IMO {imo}: Defects='{data.get('psc_defects')}', Detentions='{data.get('psc_detentions')}'"
-                    debug_msgs.append(msg)
-                    st.write(msg)
-                st.session_state.risk_debug = debug_msgs
         else:
             # Use cached data when sp_api is None (displaying cached vessels)
             compliance_data = {imo: compliance_cache.get(imo, {}) for imo in valid_imos}
             risk_data = {imo: psc_cache.get(imo, {}) for imo in valid_imos if imo in psc_cache}
-            st.write(f"DEBUG: Using cached PSC data for {len(risk_data)} vessels")
         
-        # Debug: Show risk_data keys and their types
-        if risk_data:
-            sample_keys = list(risk_data.keys())[:3]
-            lookup_debug = []
-            lookup_debug.append(f"risk_data has {len(risk_data)} keys")
-            lookup_debug.append(f"Sample risk_data keys: {sample_keys}")
-            lookup_debug.append(f"risk_data key types: {[type(k).__name__ for k in sample_keys]}")
-            st.session_state.psc_lookup_debug = lookup_debug
-            for msg in lookup_debug:
-                st.write(f"DEBUG: {msg}")
-        
-        psc_app_debug = []
         for idx, row in df.iterrows():
-            imo = str(row['imo'])
-            
-            # Debug first 3 IMO lookups
-            if idx < 3:
-                psc_app_debug.append(f"Row {idx} - Looking for IMO '{imo}' (type: {type(imo).__name__})")
-                psc_app_debug.append(f"Row {idx} - IMO in risk_data: {imo in risk_data}")
-                if imo in risk_data:
-                    psc_app_debug.append(f"Row {idx} - risk_data[{imo}] = {risk_data[imo]}")
-                st.write(f"DEBUG: Row {idx} - Looking for IMO '{imo}' (type: {type(imo).__name__})")
-                st.write(f"DEBUG: Row {idx} - IMO in risk_data: {imo in risk_data}")
-                if imo in risk_data:
-                    st.write(f"DEBUG: Row {idx} - risk_data[{imo}] = {risk_data[imo]}")
             
             # Apply compliance data (new or cached)
             if imo in compliance_data and compliance_data[imo]:
@@ -812,30 +755,8 @@ class AISTracker:
             # Apply Risk API data (PSC defects/detentions)
             if imo in risk_data and risk_data[imo]:
                 risk = risk_data[imo]
-                psc_def_val = risk.get('psc_defects', '')
-                psc_det_val = risk.get('psc_detentions', '')
-                df.at[idx, 'psc_defects'] = psc_def_val
-                df.at[idx, 'psc_detentions'] = psc_det_val
-                
-                # Log first 3 applications
-                if idx < 3:
-                    st.write(f"DEBUG: Applied to row {idx}, IMO {imo}: psc_defects='{psc_def_val}', psc_detentions='{psc_det_val}'")
-        
-        # Save debug messages to session state
-        if psc_app_debug:
-            st.session_state.psc_application_debug = psc_app_debug
-        
-        # Final verification of PSC columns
-        if len(df) > 0:
-            st.write(f"DEBUG: Final dataframe PSC columns check:")
-            st.write(f"  - psc_defects column exists: {'psc_defects' in df.columns}")
-            st.write(f"  - psc_detentions column exists: {'psc_detentions' in df.columns}")
-            if 'psc_defects' in df.columns:
-                non_empty = df[df['psc_defects'] != ''].shape[0]
-                st.write(f"  - Rows with non-empty psc_defects: {non_empty} / {len(df)}")
-            if 'psc_detentions' in df.columns:
-                non_empty = df[df['psc_detentions'] != ''].shape[0]
-                st.write(f"  - Rows with non-empty psc_detentions: {non_empty} / {len(df)}")
+                df.at[idx, 'psc_defects'] = risk.get('psc_defects', '')
+                df.at[idx, 'psc_detentions'] = risk.get('psc_detentions', '')
         
         return df
 
@@ -1303,24 +1224,6 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
 # ============= STREAMLIT UI =============
 st.title("🚢 Singapore Ship Tracker")
 st.markdown("Real-time vessel tracking with S&P Maritime compliance screening")
-
-# Debug Panel - Show persistent logs
-if 'risk_debug' in st.session_state or 'psc_application_debug' in st.session_state:
-    with st.expander("🔍 DEBUG: Risk API & PSC Data Flow", expanded=False):
-        if 'risk_debug' in st.session_state:
-            st.write("**Risk API Response (First 3):**")
-            for msg in st.session_state.risk_debug:
-                st.code(msg)
-        
-        if 'psc_application_debug' in st.session_state:
-            st.write("**PSC Data Application:**")
-            for msg in st.session_state.psc_application_debug:
-                st.code(msg)
-        
-        if 'psc_lookup_debug' in st.session_state:
-            st.write("**IMO Lookup Debug:**")
-            for msg in st.session_state.psc_lookup_debug:
-                st.code(msg)
 
 # Sidebar Configuration
 
