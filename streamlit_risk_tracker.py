@@ -198,17 +198,18 @@ if 'show_details_imo' not in st.session_state:
     st.session_state.show_details_name = None
 
 # API Classes
-class SPShipsAPI:
-    """S&P Ships API for MMSI to IMO lookup and ship details"""
+class SPShipsComplianceAPI:
+    """S&P Ships API for compliance data and ship details"""
     def __init__(self, username: str, password: str):
         self.username = username
         self.password = password
-        self.base_url = "https://shipsapi.maritime.spglobal.com/MaritimeWCF/APSShipService.svc/RESTFul"
+        self.base_url_imo = "https://shipsapi.maritime.spglobal.com/MaritimeWCF/APSShipService.svc/RESTFul/GetShipsByIHSLRorIMONumbersAll"
+        self.base_url_mmsi = "https://shipsapi.maritime.spglobal.com/MaritimeWCF/APSShipService.svc/RESTFul/GetShipDataByMMSI"
     
     def get_ship_details_by_imo(self, imo: str) -> Optional[Dict]:
         """Get full ship details including dark activity by IMO"""
         try:
-            url = f"{self.base_url}/GetShipsByIHSLRorIMONumbersAll?imoNumbers={imo}"
+            url = f"{self.base_url_imo}?imoNumbers={imo}"
             response = requests.get(url, auth=(self.username, self.password), timeout=30)
             if response.status_code == 200:
                 data = response.json()
@@ -258,28 +259,21 @@ class SPShipsAPI:
             return None
     
     def get_imo_by_mmsi(self, mmsi: str) -> Optional[str]:
-        """Look up IMO number from MMSI"""
-        try:
-            url = f"{self.base_url}/GetShipDataByMMSI?MMSI={mmsi}"
-            response = requests.get(url, auth=(self.username, self.password), timeout=15)
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('shipCount', 0) == 0:
-                    return None
-                if 'APSShipDetail' in data and data['APSShipDetail']:
-                    imo = data['APSShipDetail'].get('IHSLRorIMOShipNo')
-                    if imo and str(imo) not in ['0', '']:
-                        return str(imo)
-            return None
-        except:
-            return None
+        """Look up IMO number from MMSI - also caches compliance data"""
+        compliance = self.get_ship_compliance_by_mmsi(mmsi)
+        if compliance:
+            # IMO was cached during compliance lookup
+            mmsi_cache = st.session_state.mmsi_to_imo_cache
+            return mmsi_cache.get(mmsi)
+        return None
     
     def batch_get_imo_by_mmsi(self, mmsi_list: List[str]) -> Dict[str, str]:
-        """Look up IMO numbers for multiple MMSIs with caching"""
+        """Look up IMO numbers for multiple MMSIs - also fetches compliance data"""
         results = {}
         cache = st.session_state.mmsi_to_imo_cache
         uncached_mmsis = [m for m in mmsi_list if m not in cache or cache.get(m) is None]
         
+        # Return cached IMOs
         for mmsi in mmsi_list:
             if mmsi in cache and cache[mmsi] is not None:
                 results[mmsi] = cache[mmsi]
@@ -287,30 +281,17 @@ class SPShipsAPI:
         if not uncached_mmsis:
             return results
         
+        # Fetch compliance data for uncached MMSIs (this also caches IMOs)
         st.info(f"🔍 Looking up IMO for {len(uncached_mmsis)} vessels via MMSI...")
         progress_bar = st.progress(0)
-        found_this_batch = 0
         for i, mmsi in enumerate(uncached_mmsis):
             imo = self.get_imo_by_mmsi(mmsi)
             if imo:
-                cache[mmsi] = imo
                 results[mmsi] = imo
-                found_this_batch += 1
             progress_bar.progress((i + 1) / len(uncached_mmsis))
-            time.sleep(0.1)
         progress_bar.empty()
         
-        st.session_state.mmsi_to_imo_cache = cache
-        save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache, cache)
         return results
-
-class SPShipsComplianceAPI:
-    """S&P Ships API for compliance data via ship details"""
-    def __init__(self, username: str, password: str):
-        self.username = username
-        self.password = password
-        self.base_url_imo = "https://shipsapi.maritime.spglobal.com/MaritimeWCF/APSShipService.svc/RESTFul/GetShipsByIHSLRorIMONumbersAll"
-        self.base_url_mmsi = "https://shipsapi.maritime.spglobal.com/MaritimeWCF/APSShipService.svc/RESTFul/GetShipDataByMMSI"
     
     def parse_compliance_from_ship_detail(self, ship_detail: Dict) -> Dict:
         """Extract compliance indicators from APSShipDetail"""
@@ -532,8 +513,7 @@ class AISTracker:
             save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
             st.session_state.last_save = time.time()
     
-    def get_dataframe_with_compliance(self, sp_api: Optional[SPMaritimeAPI] = None, 
-                                     ships_api: Optional[SPShipsAPI] = None, 
+    def get_dataframe_with_compliance(self, sp_api: Optional[SPShipsComplianceAPI] = None, 
                                      expiry_hours: Optional[int] = None) -> pd.DataFrame:
         """Get dataframe with compliance indicators"""
         data = []
@@ -598,15 +578,15 @@ class AISTracker:
         missing_imo_mask = (df['imo'] == '0') | (df['imo'] == '')
         missing_imo_mmsis = df.loc[missing_imo_mask, 'mmsi'].astype(str).unique().tolist()
         
-        if missing_imo_mmsis and ships_api:
-            mmsi_to_imo = ships_api.batch_get_imo_by_mmsi(missing_imo_mmsis)
+        if missing_imo_mmsis and sp_api:
+            mmsi_to_imo = sp_api.batch_get_imo_by_mmsi(missing_imo_mmsis)
             for idx, row in df.iterrows():
                 if str(row['mmsi']) in mmsi_to_imo and mmsi_to_imo[str(row['mmsi'])]:
                     found_imo = mmsi_to_imo[str(row['mmsi'])]
                     df.at[idx, 'imo'] = found_imo
                     if found_imo not in valid_imos:
                         valid_imos.append(found_imo)
-        elif missing_imo_mmsis and not ships_api:
+        elif missing_imo_mmsis and not sp_api:
             cache = st.session_state.get('mmsi_to_imo_cache', {})
             for idx, row in df.iterrows():
                 mmsi_str = str(row['mmsi'])
@@ -739,7 +719,7 @@ def show_vessel_details_panel(imo: str, vessel_name: str, sp_username: str, sp_p
             st.session_state.show_details_name = None
             st.rerun()
         
-        ships_api = SPShipsAPI(sp_username, sp_password)
+        ships_api = SPShipsComplianceAPI(sp_username, sp_password)
         with st.spinner("🔍 Fetching vessel details..."):
             details = ships_api.get_ship_details_by_imo(imo)
         
@@ -1028,7 +1008,6 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
                   selected_types, selected_nav_statuses, show_static_only):
     """Collect data and update display"""
     sp_api = SPShipsComplianceAPI(sp_username, sp_password) if enable_compliance and sp_username and sp_password else None
-    ships_api = SPShipsAPI(sp_username, sp_password) if enable_compliance and sp_username and sp_password else None
     
     with st.spinner(f'🔄 Collecting AIS data for {duration} seconds...'):
         tracker = AISTracker(use_cached_positions=True)
@@ -1037,7 +1016,7 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
         else:
             st.warning("⚠️ No AISStream API key provided.")
             return
-        df = tracker.get_dataframe_with_compliance(sp_api, ships_api, expiry_hours=vessel_expiry_hours)
+        df = tracker.get_dataframe_with_compliance(sp_api, expiry_hours=vessel_expiry_hours)
     
     if df.empty:
         st.warning("⚠️ No ships detected. Try increasing collection time or check API key.")
