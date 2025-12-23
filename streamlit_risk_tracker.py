@@ -1,7 +1,7 @@
 """
-Singapore AIS Tracker with S&P Maritime Risk Intelligence
-Real-time vessel tracking with compliance and risk indicators
-v9 - Streamlined: Display mode toggle, improved sorting, persistent map view
+Singapore Ship Tracker with S&P Maritime Risk Intelligence
+Vessel tracking with compliance and risk indicators
+v10 - Multi-select checkboxes, PSC defects/detentions from Risk API
 """
 
 import streamlit as st
@@ -19,7 +19,7 @@ import pickle
 import os
 import math
 
-st.set_page_config(page_title="Singapore Ship Risk Tracker", page_icon="🚢", layout="wide")
+st.set_page_config(page_title="Singapore Ship Tracker", page_icon="🚢", layout="wide")
 
 # Constants
 SGT = timezone(timedelta(hours=8))
@@ -192,8 +192,8 @@ if 'ship_static_cache' not in st.session_state:
     st.session_state.last_data_update = vessel_positions.get('_last_update', None)
     st.session_state.collection_in_progress = False
 
-if 'selected_vessel' not in st.session_state:
-    st.session_state.selected_vessel = None
+if 'selected_vessels' not in st.session_state:
+    st.session_state.selected_vessels = []
 if 'show_details_imo' not in st.session_state:
     st.session_state.show_details_imo = None
     st.session_state.show_details_name = None
@@ -451,11 +451,16 @@ class SPShipsComplianceAPI:
                     for item in risk_data:
                         imo = str(item.get('lrno', ''))
                         if imo:
+                            psc_def = item.get('pscDefectsNarrative', '')
+                            psc_det = item.get('pscDetentionsNarrative', '')
                             results[imo] = {
-                                'psc_defects': item.get('pscDefectsNarrative', ''),
-                                'psc_detentions': item.get('pscDetentionsNarrative', ''),
+                                'psc_defects': psc_def,
+                                'psc_detentions': psc_det,
                                 'risk_cached_at': datetime.now(SGT).isoformat()
                             }
+                            # Debug: Show first result
+                            if len(results) == 1 and status_placeholder:
+                                status_placeholder.text(f"✅ Risk API fetched: IMO {imo} - Defects: {psc_def}, Detentions: {psc_det}")
                 else:
                     st.warning(f"⚠️ Risk API returned status {response.status_code} for batch {i//100 + 1}")
                 
@@ -960,17 +965,19 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         st.session_state.map_center_initialized = True
         st.session_state.map_center = {"lat": 1.28, "lon": 103.85, "zoom": user_zoom}
     
-    # Always use stored map center if available (unless viewing a specific vessel)
-    if st.session_state.selected_vessel and len(df) > 0:
-        vessel = df[df['mmsi'] == st.session_state.selected_vessel]
-        if len(vessel) > 0:
-            center_lat = vessel.iloc[0]['latitude']
-            center_lon = vessel.iloc[0]['longitude']
+    # Always use stored map center if available (unless viewing specific vessels)
+    if st.session_state.selected_vessels and len(df) > 0:
+        # Filter to show only selected vessels
+        selected_df = df[df['mmsi'].isin(st.session_state.selected_vessels)]
+        if len(selected_df) > 0:
+            # Center on first selected vessel
+            center_lat = selected_df.iloc[0]['latitude']
+            center_lon = selected_df.iloc[0]['longitude']
             zoom = max(user_zoom, 14)
-            # Update stored position when viewing specific vessel
+            # Update stored position when viewing specific vessels
             st.session_state.map_center = {"lat": center_lat, "lon": center_lon, "zoom": zoom}
         else:
-            # Vessel not in filtered results, use stored position
+            # Vessels not in filtered results, use stored position
             center_lat = st.session_state.map_center.get('lat', 1.28)
             center_lon = st.session_state.map_center.get('lon', 103.85)
             zoom = st.session_state.map_center.get('zoom', user_zoom)
@@ -979,6 +986,11 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         center_lat = st.session_state.map_center.get('lat', 1.28)
         center_lon = st.session_state.map_center.get('lon', 103.85)
         zoom = st.session_state.map_center.get('zoom', user_zoom)
+    
+    # Filter dataframe for map display based on checkbox selection
+    map_df = df.copy()
+    if st.session_state.selected_vessels:
+        map_df = map_df[map_df['mmsi'].isin(st.session_state.selected_vessels)]
     
     # Create map layers
     layers = []
@@ -995,7 +1007,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         if layer:
             layers.append(layer)
     
-    vessel_layers = create_vessel_layers(df, zoom=zoom, display_mode=vessel_display_mode)
+    vessel_layers = create_vessel_layers(map_df, zoom=zoom, display_mode=vessel_display_mode)
     layers.extend(vessel_layers)
     
     # Render map - use static key to maintain state across filter changes
@@ -1069,23 +1081,33 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         
         selected_rows = st.dataframe(
             table_df, use_container_width=True, height=dynamic_height,
-            hide_index=True, on_select="rerun", selection_mode="single-row",
+            hide_index=True, on_select="rerun", selection_mode="multi-row",
             column_config=column_config, key=table_key
         )
         
+        # Handle multi-row selection - filter map to show only checked vessels
         if selected_rows and selected_rows.selection and selected_rows.selection.rows:
-            selected_idx = selected_rows.selection.rows[0]
-            selected_mmsi = display_df.iloc[selected_idx]['mmsi']
-            selected_imo = display_df.iloc[selected_idx]['imo']
+            selected_indices = selected_rows.selection.rows
+            selected_mmsis = [display_df.iloc[idx]['mmsi'] for idx in selected_indices]
             
-            # Auto-apply filter to map to show selected vessel
-            st.session_state.selected_vessel = selected_mmsi
+            # Store selected MMSIs for map filtering
+            st.session_state.selected_vessels = selected_mmsis
             
-            col1, col2 = st.columns([4, 1])
-            col1.info(f"🎯 Selected & Filtered on Map: **{table_df.iloc[selected_idx]['Name']}** (IMO: {table_df.iloc[selected_idx]['IMO']}, MMSI: {table_df.iloc[selected_idx]['MMSI']})")
-            if col2.button("📋 View Details"):
-                st.session_state.show_details_imo = selected_imo
-                st.session_state.show_details_name = table_df.iloc[selected_idx]['Name']
+            # Show info about selected vessels
+            num_selected = len(selected_indices)
+            if num_selected == 1:
+                idx = selected_indices[0]
+                st.info(f"✅ {num_selected} vessel selected & filtered on map: **{table_df.iloc[idx]['Name']}** (IMO: {table_df.iloc[idx]['IMO']})")
+            else:
+                vessel_names = [table_df.iloc[idx]['Name'] for idx in selected_indices[:3]]
+                if num_selected > 3:
+                    names_display = ", ".join(vessel_names) + f" and {num_selected - 3} more"
+                else:
+                    names_display = ", ".join(vessel_names)
+                st.info(f"✅ {num_selected} vessels selected & filtered on map: {names_display}")
+        else:
+            # No selection - clear filter
+            st.session_state.selected_vessels = []
 
 def display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, 
                        show_anchorages, show_channels, show_fairways, 
@@ -1170,7 +1192,7 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
               st.session_state.get('mmsi_to_imo_cache', {}), st.session_state.get('vessel_positions', {}))
 
 # ============= STREAMLIT UI =============
-st.title("🚢 Singapore Ship Risk Tracker")
+st.title("🚢 Singapore Ship Tracker")
 st.markdown("Real-time vessel tracking with S&P Maritime compliance screening")
 
 # Sidebar Configuration
