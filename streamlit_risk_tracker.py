@@ -196,8 +196,6 @@ if 'selected_vessel' not in st.session_state:
 if 'show_details_imo' not in st.session_state:
     st.session_state.show_details_imo = None
     st.session_state.show_details_name = None
-if 'map_center' not in st.session_state:
-    st.session_state.map_center = {"lat": 1.28, "lon": 103.85, "zoom": 10}
 
 # API Classes
 class SPShipsAPI:
@@ -811,6 +809,11 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
     # Determine map view - preserve current view from session state
     user_zoom = st.session_state.get('user_zoom', 10)
     
+    # Initialize map center only on first load
+    if 'map_center_initialized' not in st.session_state:
+        st.session_state.map_center_initialized = True
+        st.session_state.map_center = {"lat": 1.28, "lon": 103.85, "zoom": user_zoom}
+    
     # Always use stored map center if available (unless viewing a specific vessel)
     if st.session_state.selected_vessel and len(df) > 0:
         vessel = df[df['mmsi'] == st.session_state.selected_vessel]
@@ -818,23 +821,18 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
             center_lat = vessel.iloc[0]['latitude']
             center_lon = vessel.iloc[0]['longitude']
             zoom = max(user_zoom, 14)
+            # Update stored position when viewing specific vessel
+            st.session_state.map_center = {"lat": center_lat, "lon": center_lon, "zoom": zoom}
         else:
             # Vessel not in filtered results, use stored position
-            if 'map_center' in st.session_state and st.session_state.map_center:
-                center_lat = st.session_state.map_center.get('lat', 1.28)
-                center_lon = st.session_state.map_center.get('lon', 103.85)
-                zoom = st.session_state.map_center.get('zoom', user_zoom)
-            else:
-                center_lat, center_lon, zoom = 1.28, 103.85, user_zoom
-    else:
-        # Use stored map position
-        if 'map_center' in st.session_state and st.session_state.map_center:
             center_lat = st.session_state.map_center.get('lat', 1.28)
             center_lon = st.session_state.map_center.get('lon', 103.85)
             zoom = st.session_state.map_center.get('zoom', user_zoom)
-        else:
-            # First time - use default
-            center_lat, center_lon, zoom = 1.28, 103.85, user_zoom
+    else:
+        # Use stored map position (preserves across filter changes)
+        center_lat = st.session_state.map_center.get('lat', 1.28)
+        center_lon = st.session_state.map_center.get('lon', 103.85)
+        zoom = st.session_state.map_center.get('zoom', user_zoom)
     
     # Create map layers
     layers = []
@@ -854,7 +852,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
     vessel_layers = create_vessel_layers(df, zoom=zoom, display_mode=vessel_display_mode)
     layers.extend(vessel_layers)
     
-    # Render map
+    # Render map - use static key to maintain state across filter changes
     view_state = pdk.ViewState(latitude=center_lat, longitude=center_lon, zoom=zoom, pitch=0)
     deck = pdk.Deck(
         map_style='https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
@@ -862,12 +860,8 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         tooltip={'html': '{tooltip}', 'style': {'backgroundColor': 'steelblue', 'color': 'white'}}
     )
     
-    # Use a unique key to maintain map state across filter changes
-    map_key = f"map_{len(df)}"  # Changes only when vessel count changes significantly
-    st.pydeck_chart(deck, use_container_width=True, key=map_key)
-    
-    # Save map center to session state for persistence
-    st.session_state.map_center = {"lat": center_lat, "lon": center_lon, "zoom": zoom}
+    # Use static key to preserve map state even when vessels change
+    st.pydeck_chart(deck, use_container_width=True, key="main_vessel_map")
     
     # Vessel table
     st.subheader("📋 Vessel Details")
@@ -875,7 +869,8 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
     if len(df) == 0:
         st.info("No vessels to display. Adjust filters or refresh data.")
     else:
-        # Sort by legal_overall: default descending order (2, 1, 0, -1)
+        # Sort by legal_overall: default descending order (2, 1, 0, -1) from top to bottom
+        # When user clicks ascending, it will show (-1, 0, 1, 2) from top to bottom
         display_df = df.copy().sort_values(['legal_overall', 'name'], ascending=[False, True])
         
         # Create display columns with emojis
@@ -956,10 +951,13 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         row_height = 35
         dynamic_height = header_height + (row_height * min(row_count, 20))  # Max 20 rows visible
         
+        # Use unique key to avoid duplicate element ID error
+        table_key = f"vessel_table_{len(df)}_{hash(tuple(df['mmsi'].tolist()))}"
+        
         selected_rows = st.dataframe(
             table_df, use_container_width=True, height=dynamic_height,
             hide_index=True, on_select="rerun", selection_mode="single-row",
-            column_config=column_config
+            column_config=column_config, key=table_key
         )
         
         if selected_rows and selected_rows.selection and selected_rows.selection.rows:
@@ -1169,11 +1167,12 @@ vessel_count = len([k for k in st.session_state.get('vessel_positions', {}).keys
 last_update_fmt = format_datetime(st.session_state.get('last_data_update', 'Never'))
 
 st.sidebar.info(f"""**Cached Vessels:** {vessel_count}
-**Static Data:** {len(st.session_state.ship_static_cache)} 
-vessels
+**Static  
+Data:** {len(st.session_state.ship_static_cache)} vessels
 **Compliance:** {len(st.session_state.risk_data_cache)} vessels
 **MMSI→IMO:** {mmsi_imo_found} found
-**Last Update:** {last_update_fmt}""")
+**Last  
+Update:** {last_update_fmt}""")
 
 col1, col2 = st.sidebar.columns(2)
 if col1.button("🗑️ Clear All"):
