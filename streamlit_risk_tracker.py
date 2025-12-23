@@ -448,7 +448,20 @@ class AISTracker:
                 }
                 await ws.send(json.dumps(subscription))
                 start_time = time.time()
+                
+                # Store start time in session state for countdown
+                if 'collection_status_placeholder' in st.session_state:
+                    st.session_state.collection_start_time = start_time
+                    st.session_state.collection_duration_seconds = duration
+                
                 async for message_json in ws:
+                    # Update countdown
+                    elapsed = time.time() - start_time
+                    remaining = int(duration - elapsed)
+                    if 'collection_status_placeholder' in st.session_state and remaining > 0:
+                        placeholder = st.session_state.collection_status_placeholder
+                        placeholder.info(f'🔄 Collecting AIS data... {remaining} seconds remaining')
+                    
                     if time.time() - start_time > duration:
                         break
                     ais_message = json.loads(message_json)
@@ -1020,12 +1033,13 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
                            show_channels, show_fairways, selected_compliance, selected_sanctions, 
                            selected_types, selected_nav_statuses, show_static_only)
     
-    # Show status message below buttons
-    status_placeholder.info(f'🔄 Collecting AIS data for {duration} seconds...')
+    # Show initial status message below buttons
+    status_placeholder.info(f'🔄 Collecting AIS data... {duration} seconds remaining')
     
-    # Mark collection as in progress and store duration
+    # Mark collection as in progress and store duration and placeholder
     st.session_state.collection_in_progress = True
     st.session_state.collection_duration = duration
+    st.session_state.collection_status_placeholder = status_placeholder
     
     # Collect data without spinner
     tracker = AISTracker(use_cached_positions=True)
@@ -1034,12 +1048,20 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
             asyncio.run(tracker.collect_data(duration, ais_api_key, coverage_bbox))
         except Exception as e:
             st.session_state.collection_in_progress = False
+            if 'collection_status_placeholder' in st.session_state:
+                del st.session_state.collection_status_placeholder
             status_placeholder.error(f"⚠️ Error collecting AIS data: {e}")
             return
     else:
         st.session_state.collection_in_progress = False
+        if 'collection_status_placeholder' in st.session_state:
+            del st.session_state.collection_status_placeholder
         status_placeholder.warning("⚠️ No AISStream API key provided.")
         return
+    
+    # Clean up the placeholder reference
+    if 'collection_status_placeholder' in st.session_state:
+        del st.session_state.collection_status_placeholder
     
     # Show fetching compliance data message
     status_placeholder.info('🔍 Fetching compliance data from S&P...')
@@ -1283,9 +1305,9 @@ if st.session_state.get('show_details_imo') and sp_username and sp_password:
                             st.session_state.get('show_details_name', ''),
                             sp_username, sp_password)
 
-# Auto-display cached data when filters change (keeps map/table visible)
-# Only display if we haven't already displayed in this run
-if not displayed_in_this_run and st.session_state.get('data_loaded') and 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
+# Auto-display cached data on initial load or when filters change
+# Display if we haven't already displayed in this run AND cached data exists
+if not displayed_in_this_run and 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
     display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
                        show_channels, show_fairways, selected_compliance, selected_sanctions, 
                        selected_types, selected_nav_statuses, show_static_only)
