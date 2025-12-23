@@ -469,6 +469,10 @@ class AISTracker:
                     st.session_state.collection_duration_seconds = duration
                 
                 async for message_json in ws:
+                    # Check if user clicked stop
+                    if not st.session_state.get('collection_in_progress', True):
+                        break
+                    
                     # Update percentage only (no progress bar)
                     elapsed = time.time() - start_time
                     progress = min(elapsed / duration, 1.0)
@@ -1113,14 +1117,20 @@ except:
         ais_api_key = st.text_input("AISStream API Key", type="password")
 
 st.sidebar.header("📡 AIS Settings")
-duration = st.sidebar.slider("AIS collection time (seconds)", 10, 300, 60)
-enable_compliance = st.sidebar.checkbox("Enable S&P compliance screening", value=True)
 
-# Refresh Now button in sidebar
-if not st.session_state.get('collection_in_progress', False):
+# Lock settings during collection or S&P API processing
+collection_active = st.session_state.get('collection_in_progress', False) or st.session_state.get('sp_api_in_progress', False)
+
+duration = st.sidebar.slider("AIS collection time (seconds)", 10, 300, 60, disabled=collection_active)
+enable_compliance = st.sidebar.checkbox("Enable S&P compliance screening", value=True, disabled=collection_active)
+
+# Refresh Now / Stop button in sidebar
+if not collection_active:
     refresh_button = st.sidebar.button("🔄 Refresh Now", type="primary", use_container_width=True)
+    stop_button = False
 else:
-    refresh_button = st.sidebar.button("🔄 Refresh Now", type="primary", use_container_width=True, disabled=True)
+    refresh_button = False
+    stop_button = st.sidebar.button("⏹️ Stop Collection", type="secondary", use_container_width=True)
 
 st.sidebar.subheader("Coverage Area")
 coverage_options = {
@@ -1308,6 +1318,26 @@ if 'auto_refresh_enabled' in st.session_state and st.session_state.auto_refresh_
     if elapsed >= refresh_interval:
         auto_refresh_triggered = True
         st.session_state.last_refresh_time = time.time()
+
+# Handle Stop button click
+if stop_button:
+    # Stop the collection
+    st.session_state.collection_in_progress = False
+    st.session_state.sp_api_in_progress = False
+    
+    # Clean up any collection state
+    if 'collection_status_placeholder' in st.session_state:
+        del st.session_state.collection_status_placeholder
+    if 'collection_duration' in st.session_state:
+        del st.session_state.collection_duration
+    
+    # Clean up S&P API state if it exists
+    if 'sp_api_state' in st.session_state:
+        del st.session_state.sp_api_state
+    
+    status_placeholder.warning("⚠️ Collection stopped by user.")
+    time.sleep(1)
+    st.rerun()
 
 # Handle Refresh Now button click or auto-refresh trigger
 if not st.session_state.get('collection_in_progress', False):
