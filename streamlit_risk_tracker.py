@@ -1021,7 +1021,12 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
     # Filter dataframe for map display based on checkbox selection
     map_df = df.copy()
     if st.session_state.selected_vessels:
+        # Debug: Show what we're filtering
+        st.write(f"🔍 Filtering map to {len(st.session_state.selected_vessels)} vessels: {st.session_state.selected_vessels}")
         map_df = map_df[map_df['mmsi'].isin(st.session_state.selected_vessels)]
+        st.write(f"📍 Map will show {len(map_df)} vessels")
+    else:
+        st.write(f"📍 No filter - showing all {len(map_df)} vessels")
     
     # Create map layers
     layers = []
@@ -1128,8 +1133,13 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
             selected_indices = selected_rows.selection.rows
             selected_mmsis = [display_df.iloc[idx]['mmsi'] for idx in selected_indices]
             
+            st.write(f"🔍 Table selection detected: {len(selected_indices)} rows")
+            st.write(f"🔍 MMSIs to save: {selected_mmsis}")
+            
             # Store selected MMSIs for map filtering
             st.session_state.selected_vessels = selected_mmsis
+            
+            st.write(f"✅ Saved to session_state.selected_vessels: {st.session_state.selected_vessels}")
             
             # Show info about selected vessels
             num_selected = len(selected_indices)
@@ -1144,6 +1154,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
                     names_display = ", ".join(vessel_names)
                 st.info(f"✅ {num_selected} vessels selected & filtered on map: {names_display}")
         else:
+            st.write("🔍 No selection detected - clearing filter")
             # No selection - clear filter
             st.session_state.selected_vessels = []
 
