@@ -325,8 +325,7 @@ class SPShipsComplianceAPI:
             return {imo: cache[imo] for imo in imo_numbers}
         
         info_placeholder = st.empty()
-        progress_bar = st.progress(0.0)
-        info_placeholder.info(f"🔍 Fetching compliance data for {len(uncached_imos)} vessels... (0/{len(uncached_imos)})")
+        info_placeholder.info(f"🔍 Fetching compliance data for {len(uncached_imos)} vessels... 0%")
         try:
             # Batch up to 100 IMOs per call
             batches = [uncached_imos[i:i+100] for i in range(0, len(uncached_imos), 100)]
@@ -351,11 +350,9 @@ class SPShipsComplianceAPI:
                                     received_imos.add(imo)
                                     cache[imo] = self.parse_compliance_from_ship_detail(detail)
                 
-                # Update progress after each batch
-                progress = (batch_idx + 1) / len(batches)
-                vessels_processed = len(received_imos)
-                progress_bar.progress(progress)
-                info_placeholder.info(f"🔍 Fetching compliance data for {len(uncached_imos)} vessels... ({vessels_processed}/{len(uncached_imos)})")
+                # Update progress percentage after each batch
+                progress_pct = int(((batch_idx + 1) / len(batches)) * 100)
+                info_placeholder.info(f"🔍 Fetching compliance data for {len(uncached_imos)} vessels... {progress_pct}%")
                 
                 time.sleep(0.5)  # Rate limiting
             
@@ -373,7 +370,6 @@ class SPShipsComplianceAPI:
         except Exception as e:
             st.error(f"⚠️ S&P Ships API error: {str(e)}")
         finally:
-            progress_bar.empty()
             info_placeholder.empty()
         
         return {imo: cache.get(imo, {}) for imo in imo_numbers}
@@ -457,20 +453,18 @@ class AISTracker:
                 await ws.send(json.dumps(subscription))
                 start_time = time.time()
                 
-                # Store start time and progress bar in session state
-                if 'collection_progress_bar' in st.session_state and 'collection_status_placeholder' in st.session_state:
+                # Store start time in session state
+                if 'collection_status_placeholder' in st.session_state:
                     st.session_state.collection_start_time = start_time
                     st.session_state.collection_duration_seconds = duration
                 
                 async for message_json in ws:
-                    # Update progress bar
+                    # Update percentage only (no progress bar)
                     elapsed = time.time() - start_time
                     progress = min(elapsed / duration, 1.0)
                     
-                    if 'collection_progress_bar' in st.session_state and 'collection_status_placeholder' in st.session_state:
-                        progress_bar = st.session_state.collection_progress_bar
+                    if 'collection_status_placeholder' in st.session_state:
                         placeholder = st.session_state.collection_status_placeholder
-                        progress_bar.progress(progress)
                         placeholder.info(f'🔄 Collecting AIS data... {int(progress*100)}%')
                     
                     if time.time() - start_time > duration:
@@ -1044,15 +1038,13 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
                            show_channels, show_fairways, selected_compliance, selected_sanctions, 
                            selected_types, selected_nav_statuses, show_static_only)
     
-    # Show initial status message and create progress bar below buttons
+    # Show initial status message below buttons
     status_placeholder.info(f'🔄 Collecting AIS data... 0%')
-    progress_bar = st.progress(0.0)
     
-    # Mark collection as in progress and store duration, placeholder, and progress bar
+    # Mark collection as in progress and store duration and placeholder
     st.session_state.collection_in_progress = True
     st.session_state.collection_duration = duration
     st.session_state.collection_status_placeholder = status_placeholder
-    st.session_state.collection_progress_bar = progress_bar
     
     # Collect data without spinner
     tracker = AISTracker(use_cached_positions=True)
@@ -1063,27 +1055,18 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
             st.session_state.collection_in_progress = False
             if 'collection_status_placeholder' in st.session_state:
                 del st.session_state.collection_status_placeholder
-            if 'collection_progress_bar' in st.session_state:
-                del st.session_state.collection_progress_bar
-            progress_bar.empty()
             status_placeholder.error(f"⚠️ Error collecting AIS data: {e}")
             return
     else:
         st.session_state.collection_in_progress = False
         if 'collection_status_placeholder' in st.session_state:
             del st.session_state.collection_status_placeholder
-        if 'collection_progress_bar' in st.session_state:
-            del st.session_state.collection_progress_bar
-        progress_bar.empty()
         status_placeholder.warning("⚠️ No AISStream API key provided.")
         return
     
-    # Clean up the placeholder references
+    # Clean up the placeholder reference
     if 'collection_status_placeholder' in st.session_state:
         del st.session_state.collection_status_placeholder
-    if 'collection_progress_bar' in st.session_state:
-        del st.session_state.collection_progress_bar
-    progress_bar.empty()
     
     # Show fetching compliance data message
     status_placeholder.info('🔍 Fetching compliance data from S&P...')
