@@ -1114,6 +1114,10 @@ st.sidebar.subheader("Quick Filters")
 if 'prev_quick_filter' not in st.session_state:
     st.session_state.prev_quick_filter = "All Vessels"
 
+# Flag to prevent filter changes from interrupting refresh
+if 'refresh_in_progress' not in st.session_state:
+    st.session_state.refresh_in_progress = False
+
 quick_filter = st.sidebar.radio("Preset", ["All Vessels", "Dark Fleet Focus", "Sanctioned Only", "Custom"], 
                                 index=0, horizontal=True, key="quick_filter_radio")
 
@@ -1137,7 +1141,9 @@ if st.session_state.prev_quick_filter != quick_filter and quick_filter != "Custo
     st.session_state.sanctions_filter = default_sanctions
     st.session_state.types_filter = default_types
     st.session_state.prev_quick_filter = quick_filter
-    st.rerun()
+    # Only rerun if refresh is not in progress
+    if not st.session_state.refresh_in_progress:
+        st.rerun()
 
 st.sidebar.subheader("Compliance")
 compliance_options = ["All", "Severe (🔴)", "Warning (🟡)", "Clear (🟢)"]
@@ -1176,8 +1182,7 @@ Data:** {len(st.session_state.ship_static_cache)} vessels
 **Last  
 Update:** {last_update_fmt}""")
 
-col1, col2 = st.sidebar.columns(2)
-if col1.button("🗑️ Clear All"):
+if st.sidebar.button("🗑️ Clear All Cache"):
     st.session_state.ship_static_cache = {}
     st.session_state.risk_data_cache = {}
     st.session_state.mmsi_to_imo_cache = {}
@@ -1186,10 +1191,6 @@ if col1.button("🗑️ Clear All"):
     save_cache({}, {}, {}, {})
     st.sidebar.success("Cache cleared!")
     st.rerun()
-if col2.button("🔄 Retry IMO"):
-    st.session_state.mmsi_to_imo_cache = {}
-    st.sidebar.success("MMSI→IMO cache cleared!")
-    st.rerun()
 
 # Control buttons
 col1, col2, col3 = st.columns([1, 1, 4])
@@ -1197,12 +1198,14 @@ col1, col2, col3 = st.columns([1, 1, 4])
 displayed_in_this_run = False
 
 if col1.button("🔄 Refresh Now", type="primary"):
+    st.session_state.refresh_in_progress = True  # Prevent filter changes from interrupting
     st.session_state.last_refresh_time = time.time()
     update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_username, sp_password,
                   vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
                   show_channels, show_fairways, selected_compliance, selected_sanctions, 
                   selected_types, selected_nav_statuses, show_static_only)
     st.session_state.data_loaded = True
+    st.session_state.refresh_in_progress = False  # Reset flag after refresh completes
     displayed_in_this_run = True
 
 if col2.button("📦 View Cached"):
