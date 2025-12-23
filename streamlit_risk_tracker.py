@@ -749,9 +749,6 @@ class AISTracker:
                 st.write(f"DEBUG: Row {idx} - IMO in risk_data: {imo in risk_data}")
                 if imo in risk_data:
                     st.write(f"DEBUG: Row {idx} - risk_data[{imo}] = {risk_data[imo]}")
-        
-        if psc_app_debug:
-            st.session_state.psc_application_debug = psc_app_debug
             
             # Apply compliance data (new or cached)
             if imo in compliance_data and compliance_data[imo]:
@@ -814,6 +811,10 @@ class AISTracker:
                 # Log first 3 applications
                 if idx < 3:
                     st.write(f"DEBUG: Applied to row {idx}, IMO {imo}: psc_defects='{psc_def_val}', psc_detentions='{psc_det_val}'")
+        
+        # Save debug messages to session state
+        if psc_app_debug:
+            st.session_state.psc_application_debug = psc_app_debug
         
         # Final verification of PSC columns
         if len(df) > 0:
