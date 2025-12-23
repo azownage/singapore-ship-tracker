@@ -198,12 +198,6 @@ if 'show_details_imo' not in st.session_state:
     st.session_state.show_details_imo = None
     st.session_state.show_details_name = None
 
-# Early exit: If collection is in progress and user changed filters, just show cached data with new filters
-if st.session_state.get('collection_in_progress', False):
-    st.sidebar.warning("🔄 Data collection in progress... Showing cached data with your new filters.")
-    # The filters will be read below and applied to cached data
-    # We'll skip the normal flow and just display cached data at the end
-
 # API Classes
 class SPShipsComplianceAPI:
     """S&P Ships API for compliance data and ship details"""
@@ -1035,8 +1029,9 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
     status_placeholder = st.sidebar.empty()
     status_placeholder.info(f'🔄 Collecting AIS data for {duration} seconds... (Do not change filters)')
     
-    # Mark collection as in progress to prevent filter changes
+    # Mark collection as in progress and store duration
     st.session_state.collection_in_progress = True
+    st.session_state.collection_duration = duration
     
     # Collect data without spinner
     tracker = AISTracker(use_cached_positions=True)
@@ -1107,8 +1102,8 @@ selected_coverage = st.sidebar.selectbox("Select coverage area", list(coverage_o
 coverage_bbox = coverage_options[selected_coverage]
 
 st.sidebar.subheader("⏱️ Vessel Expiry")
-expiry_options = {"1 hour": 1, "2 hours": 2, "4 hours": 4, "8 hours": 8, "12 hours": 12, "24 hours": 24, "Never (keep forever)": None}
-selected_expiry = st.sidebar.selectbox("Remove vessels not seen in:", list(expiry_options.keys()), index=2)
+expiry_options = {"30 minutes": 0.5, "1 hour": 1, "2 hours": 2, "4 hours": 4, "8 hours": 8, "12 hours": 12, "24 hours": 24, "Never (keep forever)": None}
+selected_expiry = st.sidebar.selectbox("Remove vessels not seen in:", list(expiry_options.keys()), index=0)
 vessel_expiry_hours = expiry_options[selected_expiry]
 
 st.sidebar.header("🗺️ Maritime Zones")
@@ -1266,9 +1261,14 @@ if not st.session_state.get('collection_in_progress', False):
         st.session_state.data_loaded = True
         displayed_in_this_run = True
 else:
-    # Collection in progress - disable buttons and show cached data with new filters
+    # Collection in progress - disable buttons, show progress indicator, and display cached data with new filters
     col1.button("🔄 Refresh Now", type="primary", use_container_width=True, disabled=True)
     col2.button("📦 View Cached", use_container_width=True, disabled=True)
+    
+    # Show the progress indicator (same as in update_display)
+    if 'collection_duration' in st.session_state:
+        st.sidebar.info(f'🔄 Collecting AIS data for {st.session_state.collection_duration} seconds... (Do not change filters)')
+    
     # Display cached data with the new filters
     if 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
         display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
