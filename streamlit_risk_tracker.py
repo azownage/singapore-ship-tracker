@@ -1007,7 +1007,6 @@ def display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones
                        selected_nav_statuses, show_static_only):
     """Display cached vessel data without collecting new AIS data"""
     if 'vessel_positions' not in st.session_state or not st.session_state.vessel_positions:
-        st.info("ℹ️ No cached vessel data. Click 'Refresh Now' to collect AIS data.")
         return
     
     cached_positions = st.session_state.vessel_positions
@@ -1016,7 +1015,6 @@ def display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones
     df = tracker.get_dataframe_with_compliance(sp_api=None, expiry_hours=vessel_expiry_hours)
     
     if df.empty:
-        st.info("ℹ️ No cached vessel data. Click 'Refresh Now' to collect AIS data.")
         return
     
     df = apply_filters(df, selected_compliance, selected_sanctions, selected_types, 
@@ -1068,9 +1066,7 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
     if 'collection_status_placeholder' in st.session_state:
         del st.session_state.collection_status_placeholder
     
-    # Show fetching compliance data message
-    status_placeholder.info('🔍 Fetching compliance data from S&P...')
-    
+    # get_dataframe_with_compliance will show its own detailed progress message with vessel count and percentage
     df = tracker.get_dataframe_with_compliance(sp_api, expiry_hours=vessel_expiry_hours)
     
     # Mark collection as complete
