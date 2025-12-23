@@ -868,80 +868,59 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         st.info("No vessels to display. Adjust filters or refresh data.")
     else:
         # Sort by legal_overall: default descending order (2, 1, 0, -1) from top to bottom
-        # When user clicks ascending, it will show (-1, 0, 1, 2) from top to bottom
         display_df = df.copy().sort_values(['legal_overall', 'name'], ascending=[False, True])
         
-        # Create display columns with emojis
-        display_df['legal_display'] = display_df['legal_overall'].apply(format_compliance_value)
-        display_df['un_display'] = display_df['un_sanction'].apply(format_compliance_value)
-        display_df['ofac_display'] = display_df['ofac_sanction'].apply(format_compliance_value)
-        display_df['eu_display'] = display_df['eu_sanction'].apply(format_compliance_value)
-        display_df['bes_display'] = display_df['bes_sanction'].apply(format_compliance_value)
-        display_df['owner_un_display'] = display_df['owner_un'].apply(format_compliance_value)
-        display_df['owner_ofac_display'] = display_df['owner_ofac'].apply(format_compliance_value)
-        display_df['dark_display'] = display_df['dark_activity'].apply(format_compliance_value)
-        display_df['sts_display'] = display_df['sts_partner_non_compliance'].apply(format_compliance_value)
-        display_df['port3m_display'] = display_df['port_call_3m'].apply(format_compliance_value)
-        display_df['port6m_display'] = display_df['port_call_6m'].apply(format_compliance_value)
-        display_df['port12m_display'] = display_df['port_call_12m'].apply(format_compliance_value)
-        display_df['flag_sanc_display'] = display_df['flag_sanctioned'].apply(format_compliance_value)
-        display_df['flag_disp_display'] = display_df['flag_disputed'].apply(format_compliance_value)
+        # Create sortable emoji strings using invisible Unicode characters for sorting
+        # U+2003 = EM SPACE (different widths = different sort order)
+        # This makes emojis sort correctly: 2 > 1 > 0 > -1 (descending)
+        def create_sortable_emoji(value):
+            emoji = format_compliance_value(value)
+            # Add invisible prefix that sorts correctly
+            if value == 2:
+                return f"\u2003\u2003{emoji}"  # Two spaces = sorts first descending
+            elif value == 1:
+                return f"\u2003{emoji}"  # One space = sorts second
+            elif value == 0:
+                return emoji  # No space = sorts third
+            else:  # -1
+                return f"\u200B{emoji}"  # Zero-width space = sorts last
         
-        # Create table with display columns - keep original values for sorting
+        # Create sortable display columns
+        display_df['legal_display'] = display_df['legal_overall'].apply(create_sortable_emoji)
+        display_df['un_display'] = display_df['un_sanction'].apply(create_sortable_emoji)
+        display_df['ofac_display'] = display_df['ofac_sanction'].apply(create_sortable_emoji)
+        display_df['eu_display'] = display_df['eu_sanction'].apply(create_sortable_emoji)
+        display_df['bes_display'] = display_df['bes_sanction'].apply(create_sortable_emoji)
+        display_df['owner_un_display'] = display_df['owner_un'].apply(create_sortable_emoji)
+        display_df['owner_ofac_display'] = display_df['owner_ofac'].apply(create_sortable_emoji)
+        display_df['dark_display'] = display_df['dark_activity'].apply(create_sortable_emoji)
+        display_df['sts_display'] = display_df['sts_partner_non_compliance'].apply(create_sortable_emoji)
+        display_df['port3m_display'] = display_df['port_call_3m'].apply(create_sortable_emoji)
+        display_df['port6m_display'] = display_df['port_call_6m'].apply(create_sortable_emoji)
+        display_df['port12m_display'] = display_df['port_call_12m'].apply(create_sortable_emoji)
+        display_df['flag_sanc_display'] = display_df['flag_sanctioned'].apply(create_sortable_emoji)
+        display_df['flag_disp_display'] = display_df['flag_disputed'].apply(create_sortable_emoji)
+        
+        # Create table with display columns only
         table_df = display_df[[
             'name', 'imo', 'mmsi', 'type_name', 'nav_status_name',
-            'legal_overall', 'legal_display',
-            'un_sanction', 'un_display',
-            'ofac_sanction', 'ofac_display',
-            'eu_sanction', 'eu_display',
-            'bes_sanction', 'bes_display',
-            'owner_un', 'owner_un_display',
-            'owner_ofac', 'owner_ofac_display',
-            'dark_activity', 'dark_display',
-            'sts_partner_non_compliance', 'sts_display',
-            'port_call_3m', 'port3m_display',
-            'port_call_6m', 'port6m_display',
-            'port_call_12m', 'port12m_display',
-            'flag_sanctioned', 'flag_sanc_display',
-            'flag_disputed', 'flag_disp_display'
+            'legal_display', 'un_display', 'ofac_display', 'eu_display', 'bes_display',
+            'owner_un_display', 'owner_ofac_display', 'dark_display', 'sts_display',
+            'port3m_display', 'port6m_display', 'port12m_display',
+            'flag_sanc_display', 'flag_disp_display'
         ]].copy()
         
         # Rename columns for display
         table_df.columns = [
             'Name', 'IMO', 'MMSI', 'Type', 'Nav Status',
-            'Legal_Val', 'Legal',
-            'UN_Val', 'UN',
-            'OFAC_Val', 'OFAC',
-            'EU_Val', 'EU',
-            'UK_Val', 'UK',
-            'Own_UN_Val', 'Own UN',
-            'Own_OFAC_Val', 'Own OFAC',
-            'Dark_Val', 'Dark',
-            'STS_Val', 'STS',
-            'Port_3m_Val', 'Port 3m',
-            'Port_6m_Val', 'Port 6m',
-            'Port_12m_Val', 'Port 12m',
-            'Flag_Sanc_Val', 'Flag Sanc',
-            'Flag_Disp_Val', 'Flag Disp'
+            'Legal', 'UN', 'OFAC', 'EU', 'UK',
+            'Own UN', 'Own OFAC', 'Dark', 'STS',
+            'Port 3m', 'Port 6m', 'Port 12m',
+            'Flag Sanc', 'Flag Disp'
         ]
         
-        # Configure columns - hide value columns, auto-adjust width
-        column_config = {
-            'Legal_Val': None,
-            'UN_Val': None,
-            'OFAC_Val': None,
-            'EU_Val': None,
-            'UK_Val': None,
-            'Own_UN_Val': None,
-            'Own_OFAC_Val': None,
-            'Dark_Val': None,
-            'STS_Val': None,
-            'Port_3m_Val': None,
-            'Port_6m_Val': None,
-            'Port_12m_Val': None,
-            'Flag_Sanc_Val': None,
-            'Flag_Disp_Val': None,
-        }
+        # Configure columns
+        column_config = {}
         
         # Calculate dynamic height based on number of rows
         row_count = len(table_df)
