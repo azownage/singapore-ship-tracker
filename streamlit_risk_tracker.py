@@ -428,6 +428,12 @@ class SPShipsComplianceAPI:
         
         risk_api_url = "https://webservices.maritime.spglobal.com/RiskAndCompliance/RisksByImos"
         
+        # Log API call details
+        if status_placeholder:
+            status_placeholder.text(f"📡 Risk API URL: {risk_api_url}")
+            st.write(f"DEBUG: Calling Risk API with {len(imo_numbers)} IMOs")
+            st.write(f"DEBUG: First 5 IMOs: {imo_numbers[:5]}")
+        
         # Fetch in batches of 100
         results = {}
         for i in range(0, len(imo_numbers), 100):
@@ -438,14 +444,25 @@ class SPShipsComplianceAPI:
                 if status_placeholder:
                     status_placeholder.text(f"🔍 Fetching risk indicators... ({i+1}-{min(i+100, len(imo_numbers))} of {len(imo_numbers)})")
                 
+                full_url = f"{risk_api_url}?imos={imos_param}"
+                st.write(f"DEBUG: Full URL: {full_url[:200]}...")
+                
                 response = requests.get(
-                    f"{risk_api_url}?imos={imos_param}",
+                    full_url,
                     auth=(self.username, self.password),
                     timeout=30
                 )
                 
+                st.write(f"DEBUG: Response status code: {response.status_code}")
+                
                 if response.status_code == 200:
                     risk_data = response.json()
+                    st.write(f"DEBUG: Response type: {type(risk_data)}, Length: {len(risk_data) if isinstance(risk_data, list) else 'N/A'}")
+                    
+                    # Log first item structure
+                    if isinstance(risk_data, list) and len(risk_data) > 0:
+                        st.write(f"DEBUG: First item keys: {list(risk_data[0].keys())[:10]}")
+                        st.write(f"DEBUG: First item sample: lrno={risk_data[0].get('lrno')}, pscDefectsNarrative={risk_data[0].get('pscDefectsNarrative')}, pscDetentionsNarrative={risk_data[0].get('pscDetentionsNarrative')}")
                     
                     # risk_data is a list of risk indicators
                     for item in risk_data:
@@ -459,16 +476,25 @@ class SPShipsComplianceAPI:
                                 'risk_cached_at': datetime.now(SGT).isoformat()
                             }
                             # Debug: Show first result
-                            if len(results) == 1 and status_placeholder:
-                                status_placeholder.text(f"✅ Risk API fetched: IMO {imo} - Defects: {psc_def}, Detentions: {psc_det}")
+                            if len(results) == 1:
+                                st.write(f"DEBUG: First result stored - IMO {imo}: Defects='{psc_def}', Detentions='{psc_det}'")
+                                if status_placeholder:
+                                    status_placeholder.text(f"✅ Risk API fetched: IMO {imo} - Defects: {psc_def}, Detentions: {psc_det}")
                 else:
                     st.warning(f"⚠️ Risk API returned status {response.status_code} for batch {i//100 + 1}")
+                    st.write(f"DEBUG: Response text: {response.text[:500]}")
                 
                 time.sleep(0.2)  # Rate limiting
             
             except Exception as e:
-                st.warning(f"⚠️ Risk API error for batch {i//100 + 1}: {str(e)}")
+                st.error(f"⚠️ Risk API error for batch {i//100 + 1}: {str(e)}")
+                import traceback
+                st.write(f"DEBUG: Full traceback:\n{traceback.format_exc()}")
                 continue
+        
+        st.write(f"DEBUG: Total results collected: {len(results)}")
+        if results:
+            st.write(f"DEBUG: Sample result IMOs: {list(results.keys())[:5]}")
         
         return results
 
@@ -680,7 +706,16 @@ class AISTracker:
             compliance_data = sp_api.get_ship_compliance_by_imo_batch(valid_imos, status_placeholder)
             
             # Fetch Risk API data (PSC defects/detentions) for all valid IMOs
+            if status_placeholder:
+                status_placeholder.text(f"🔍 Starting Risk API call for {len(valid_imos)} IMOs...")
             risk_data = sp_api.get_risk_indicators_by_imo_batch(valid_imos, status_placeholder)
+            if status_placeholder:
+                status_placeholder.text(f"✅ Risk API returned data for {len(risk_data)} vessels")
+            
+            # Log first 3 results for debugging
+            if risk_data and status_placeholder:
+                for idx, (imo, data) in enumerate(list(risk_data.items())[:3]):
+                    st.write(f"DEBUG IMO {imo}: Defects='{data.get('psc_defects')}', Detentions='{data.get('psc_detentions')}'")
         else:
             compliance_data = {imo: compliance_cache.get(imo, {}) for imo in valid_imos}
             risk_data = {}
@@ -741,8 +776,26 @@ class AISTracker:
             # Apply Risk API data (PSC defects/detentions)
             if imo in risk_data and risk_data[imo]:
                 risk = risk_data[imo]
-                df.at[idx, 'psc_defects'] = risk.get('psc_defects', '')
-                df.at[idx, 'psc_detentions'] = risk.get('psc_detentions', '')
+                psc_def_val = risk.get('psc_defects', '')
+                psc_det_val = risk.get('psc_detentions', '')
+                df.at[idx, 'psc_defects'] = psc_def_val
+                df.at[idx, 'psc_detentions'] = psc_det_val
+                
+                # Log first 3 applications
+                if idx < 3:
+                    st.write(f"DEBUG: Applied to row {idx}, IMO {imo}: psc_defects='{psc_def_val}', psc_detentions='{psc_det_val}'")
+        
+        # Final verification of PSC columns
+        if len(df) > 0:
+            st.write(f"DEBUG: Final dataframe PSC columns check:")
+            st.write(f"  - psc_defects column exists: {'psc_defects' in df.columns}")
+            st.write(f"  - psc_detentions column exists: {'psc_detentions' in df.columns}")
+            if 'psc_defects' in df.columns:
+                non_empty = df[df['psc_defects'] != ''].shape[0]
+                st.write(f"  - Rows with non-empty psc_defects: {non_empty} / {len(df)}")
+            if 'psc_detentions' in df.columns:
+                non_empty = df[df['psc_detentions'] != ''].shape[0]
+                st.write(f"  - Rows with non-empty psc_detentions: {non_empty} / {len(df)}")
         
         return df
 
@@ -911,11 +964,27 @@ def apply_filters(df: pd.DataFrame, selected_compliance, selected_sanctions,
     if selected_sanctions and "All" not in selected_sanctions:
         sanction_mask = pd.Series([False] * len(filtered_df), index=filtered_df.index)
         if "UN Sanctions" in selected_sanctions:
-            sanction_mask = sanction_mask | (filtered_df['un_sanction'] == 2)
+            sanction_mask = sanction_mask | (filtered_df['un_sanction'].isin([1, 2]))
         if "OFAC Sanctions" in selected_sanctions:
-            sanction_mask = sanction_mask | (filtered_df['ofac_sanction'] == 2)
+            sanction_mask = sanction_mask | (filtered_df['ofac_sanction'].isin([1, 2]))
+        if "OFAC Non-SDN" in selected_sanctions:
+            sanction_mask = sanction_mask | (filtered_df['ofac_non_sdn'].isin([1, 2]))
+        if "OFAC Advisory" in selected_sanctions:
+            sanction_mask = sanction_mask | (filtered_df['ofac_advisory'].isin([1, 2]))
+        if "Port Call (12m)" in selected_sanctions:
+            sanction_mask = sanction_mask | (filtered_df['port_call_12m'].isin([1, 2]))
         if "Dark Activity" in selected_sanctions:
-            sanction_mask = sanction_mask | (filtered_df['dark_activity'] >= 1)
+            sanction_mask = sanction_mask | (filtered_df['dark_activity'].isin([1, 2]))
+        if "STS Non-Compliance" in selected_sanctions:
+            sanction_mask = sanction_mask | (filtered_df['sts_partner_non_compliance'].isin([1, 2]))
+        if "Flag Disputed" in selected_sanctions:
+            sanction_mask = sanction_mask | (filtered_df['flag_disputed'].isin([1, 2]))
+        if "Flag Sanctioned" in selected_sanctions:
+            sanction_mask = sanction_mask | (filtered_df['flag_sanctioned'].isin([1, 2]))
+        if "Flag Hist Sanctioned" in selected_sanctions:
+            sanction_mask = sanction_mask | (filtered_df['flag_sanctioned_historical'].isin([1, 2]))
+        if "Security/Legal Dispute" in selected_sanctions:
+            sanction_mask = sanction_mask | (filtered_df['security_legal_dispute'].isin([1, 2]))
         filtered_df = filtered_df[sanction_mask]
     
     if selected_types and "All" not in selected_types:
@@ -1305,8 +1374,12 @@ selected_compliance = st.sidebar.multiselect("Legal Overall", compliance_options
                                              default=st.session_state.get('compliance_filter', default_compliance),
                                              key="compliance_filter")
 
-sanction_options = ["All", "UN Sanctions", "OFAC Sanctions", "Dark Activity"]
-selected_sanctions = st.sidebar.multiselect("Sanctions & Dark Activity", sanction_options, 
+sanction_options = ["All", 
+                    "UN Sanctions", "OFAC Sanctions", "OFAC Non-SDN", "OFAC Advisory",
+                    "Port Call (12m)", "Dark Activity", "STS Non-Compliance",
+                    "Flag Disputed", "Flag Sanctioned", "Flag Hist Sanctioned", 
+                    "Security/Legal Dispute"]
+selected_sanctions = st.sidebar.multiselect("Compliance Indicators (Warning/Severe)", sanction_options, 
                                             default=st.session_state.get('sanctions_filter', default_sanctions),
                                             key="sanctions_filter")
 
