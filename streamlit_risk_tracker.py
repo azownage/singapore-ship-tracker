@@ -302,7 +302,6 @@ class SPShipsAPI:
         
         st.session_state.mmsi_to_imo_cache = cache
         save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache, cache)
-        st.success(f"✅ Found IMO for {found_this_batch}/{len(uncached_mmsis)} vessels")
         return results
 
 class SPMaritimeAPI:
@@ -368,7 +367,6 @@ class SPMaritimeAPI:
             
             st.session_state.risk_data_cache = cache
             save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
-            st.success(f"✅ Cached compliance data for {len(received_imos)}/{len(uncached_imos)} vessels")
         except Exception as e:
             st.error(f"⚠️ S&P API error: {str(e)}")
         return {imo: cache.get(imo, {}) for imo in imo_numbers}
@@ -997,12 +995,6 @@ def display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones
     
     df = apply_filters(df, selected_compliance, selected_sanctions, selected_types, 
                       selected_nav_statuses, show_static_only)
-    
-    if df.empty:
-        st.warning("⚠️ No vessels match filters. Adjust filters to see vessels.")
-        display_vessel_data(df, last_update, vessel_display_mode, maritime_zones, 
-                          show_anchorages, show_channels, show_fairways, is_cached=True)
-        return
     
     display_vessel_data(df, last_update, vessel_display_mode, maritime_zones, 
                        show_anchorages, show_channels, show_fairways, is_cached=True)
