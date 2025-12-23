@@ -295,21 +295,17 @@ class SPShipsComplianceAPI:
         """Extract compliance indicators from APSShipDetail"""
         return {
             'legal_overall': int(ship_detail.get('LegalOverall', -1)),
-            'ship_bes_sanction': int(ship_detail.get('ShipBESSanctionList', -1)),
-            'ship_eu_sanction': int(ship_detail.get('ShipEUSanctionList', -1)),
-            'ship_ofac_sanction': int(ship_detail.get('ShipOFACSanctionList', -1)),
             'ship_un_sanction': int(ship_detail.get('ShipUNSanctionList', -1)),
+            'ship_ofac_sanction': int(ship_detail.get('ShipOFACSanctionList', -1)),
+            'ship_ofac_non_sdn': int(ship_detail.get('ShipOFACNonSDNSanctionList', -1)),
+            'ship_ofac_advisory': int(ship_detail.get('ShipUSTreasuryOFACAdvisoryList', -1)),
+            'port_call_12m': int(ship_detail.get('ShipSanctionedCountryPortCallLast12m', -1)),
             'dark_activity': int(ship_detail.get('ShipDarkActivityIndicator', -1)),
+            'sts_partner_non_compliance': int(ship_detail.get('ShipSTSPartnerNonComplianceLast12m', -1)),
             'flag_disputed': int(ship_detail.get('ShipFlagDisputed', -1)),
             'flag_sanctioned': int(ship_detail.get('ShipFlagSanctionedCountry', -1)),
-            'port_call_3m': int(ship_detail.get('ShipSanctionedCountryPortCallLast3m', -1)),
-            'port_call_6m': int(ship_detail.get('ShipSanctionedCountryPortCallLast6m', -1)),
-            'port_call_12m': int(ship_detail.get('ShipSanctionedCountryPortCallLast12m', -1)),
-            'owner_ofac': int(ship_detail.get('ShipOwnerOFACSanctionList', -1)),
-            'owner_un': int(ship_detail.get('ShipOwnerUNSanctionList', -1)),
-            'owner_eu': int(ship_detail.get('ShipOwnerEUSanctionList', -1)),
-            'owner_bes': int(ship_detail.get('ShipOwnerBESSanctionList', -1)),
-            'sts_partner_non_compliance': int(ship_detail.get('ShipSTSPartnerNonComplianceLast12m', -1)),
+            'flag_sanctioned_historical': int(ship_detail.get('ShipHistoricalFlagSanctionedCountry', -1)),
+            'security_legal_dispute': int(ship_detail.get('ShipSecurityLegalDisputeEventLast12m', -1)),
             'cached_at': datetime.now(SGT).isoformat()
         }
     
@@ -588,11 +584,11 @@ class AISTracker:
                 'call_sign': static.get('call_sign', ''),
                 'has_static': bool(static.get('name')),
                 'last_seen': ship_data.get('last_seen', pos.get('timestamp', '')),
-                'legal_overall': -1, 'un_sanction': -1, 'ofac_sanction': -1, 'dark_activity': -1,
-                'bes_sanction': -1, 'eu_sanction': -1, 'flag_disputed': -1, 'flag_sanctioned': -1,
-                'port_call_3m': -1, 'port_call_6m': -1, 'port_call_12m': -1,
-                'owner_ofac': -1, 'owner_un': -1, 'owner_eu': -1, 'owner_bes': -1,
-                'sts_partner_non_compliance': -1, 'compliance_checked': False,
+                'legal_overall': -1, 'un_sanction': -1, 'ofac_sanction': -1, 'ofac_non_sdn': -1,
+                'ofac_advisory': -1, 'port_call_12m': -1, 'dark_activity': -1,
+                'sts_partner_non_compliance': -1, 'flag_disputed': -1, 'flag_sanctioned': -1,
+                'flag_sanctioned_historical': -1, 'security_legal_dispute': -1,
+                'compliance_checked': False,
                 'color': self.get_ship_color(-1)
             })
         
@@ -640,19 +636,15 @@ class AISTracker:
                 df.at[idx, 'legal_overall'] = legal_overall
                 df.at[idx, 'un_sanction'] = int(comp.get('ship_un_sanction', 0) or 0)
                 df.at[idx, 'ofac_sanction'] = int(comp.get('ship_ofac_sanction', 0) or 0)
+                df.at[idx, 'ofac_non_sdn'] = int(comp.get('ship_ofac_non_sdn', 0) or 0)
+                df.at[idx, 'ofac_advisory'] = int(comp.get('ship_ofac_advisory', 0) or 0)
+                df.at[idx, 'port_call_12m'] = int(comp.get('port_call_12m', 0) or 0)
                 df.at[idx, 'dark_activity'] = int(comp.get('dark_activity', 0) or 0)
-                df.at[idx, 'bes_sanction'] = int(comp.get('ship_bes_sanction', 0) or 0)
-                df.at[idx, 'eu_sanction'] = int(comp.get('ship_eu_sanction', 0) or 0)
+                df.at[idx, 'sts_partner_non_compliance'] = int(comp.get('sts_partner_non_compliance', 0) or 0)
                 df.at[idx, 'flag_disputed'] = int(comp.get('flag_disputed', 0) or 0)
                 df.at[idx, 'flag_sanctioned'] = int(comp.get('flag_sanctioned', 0) or 0)
-                df.at[idx, 'port_call_3m'] = int(comp.get('port_call_3m', 0) or 0)
-                df.at[idx, 'port_call_6m'] = int(comp.get('port_call_6m', 0) or 0)
-                df.at[idx, 'port_call_12m'] = int(comp.get('port_call_12m', 0) or 0)
-                df.at[idx, 'owner_ofac'] = int(comp.get('owner_ofac', 0) or 0)
-                df.at[idx, 'owner_un'] = int(comp.get('owner_un', 0) or 0)
-                df.at[idx, 'owner_eu'] = int(comp.get('owner_eu', 0) or 0)
-                df.at[idx, 'owner_bes'] = int(comp.get('owner_bes', 0) or 0)
-                df.at[idx, 'sts_partner_non_compliance'] = int(comp.get('sts_partner_non_compliance', 0) or 0)
+                df.at[idx, 'flag_sanctioned_historical'] = int(comp.get('flag_sanctioned_historical', 0) or 0)
+                df.at[idx, 'security_legal_dispute'] = int(comp.get('security_legal_dispute', 0) or 0)
                 df.at[idx, 'compliance_checked'] = True
                 df.at[idx, 'color'] = self.get_ship_color(legal_overall)
         
@@ -939,34 +931,30 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         display_df['legal_display'] = display_df['legal_overall'].apply(format_compliance_value)
         display_df['un_display'] = display_df['un_sanction'].apply(format_compliance_value)
         display_df['ofac_display'] = display_df['ofac_sanction'].apply(format_compliance_value)
-        display_df['eu_display'] = display_df['eu_sanction'].apply(format_compliance_value)
-        display_df['bes_display'] = display_df['bes_sanction'].apply(format_compliance_value)
-        display_df['owner_un_display'] = display_df['owner_un'].apply(format_compliance_value)
-        display_df['owner_ofac_display'] = display_df['owner_ofac'].apply(format_compliance_value)
+        display_df['ofac_non_sdn_display'] = display_df['ofac_non_sdn'].apply(format_compliance_value)
+        display_df['ofac_advisory_display'] = display_df['ofac_advisory'].apply(format_compliance_value)
+        display_df['port12m_display'] = display_df['port_call_12m'].apply(format_compliance_value)
         display_df['dark_display'] = display_df['dark_activity'].apply(format_compliance_value)
         display_df['sts_display'] = display_df['sts_partner_non_compliance'].apply(format_compliance_value)
-        display_df['port3m_display'] = display_df['port_call_3m'].apply(format_compliance_value)
-        display_df['port6m_display'] = display_df['port_call_6m'].apply(format_compliance_value)
-        display_df['port12m_display'] = display_df['port_call_12m'].apply(format_compliance_value)
-        display_df['flag_sanc_display'] = display_df['flag_sanctioned'].apply(format_compliance_value)
         display_df['flag_disp_display'] = display_df['flag_disputed'].apply(format_compliance_value)
+        display_df['flag_sanc_display'] = display_df['flag_sanctioned'].apply(format_compliance_value)
+        display_df['flag_hist_display'] = display_df['flag_sanctioned_historical'].apply(format_compliance_value)
+        display_df['security_display'] = display_df['security_legal_dispute'].apply(format_compliance_value)
         
         # Create table with display columns only
         table_df = display_df[[
             'name', 'imo', 'mmsi', 'type_name', 'nav_status_name',
-            'legal_display', 'un_display', 'ofac_display', 'eu_display', 'bes_display',
-            'owner_un_display', 'owner_ofac_display', 'dark_display', 'sts_display',
-            'port3m_display', 'port6m_display', 'port12m_display',
-            'flag_sanc_display', 'flag_disp_display'
+            'legal_display', 'un_display', 'ofac_display', 'ofac_non_sdn_display',
+            'ofac_advisory_display', 'port12m_display', 'dark_display', 'sts_display',
+            'flag_disp_display', 'flag_sanc_display', 'flag_hist_display', 'security_display'
         ]].copy()
         
         # Rename columns for display
         table_df.columns = [
             'Name', 'IMO', 'MMSI', 'Type', 'Nav Status',
-            'Legal Overall', 'UN', 'OFAC', 'EU', 'UK',
-            'Own UN', 'Own OFAC', 'Dark', 'STS',
-            'Port 3m', 'Port 6m', 'Port 12m',
-            'Flag Sanc', 'Flag Disp'
+            'Legal Overall', 'UN', 'OFAC', 'OFAC Non-SDN',
+            'OFAC Advisory', 'Port 12m', 'Dark', 'STS',
+            'Flag Disp', 'Flag Sanc', 'Flag Hist', 'Security'
         ]
         
         # Configure columns
