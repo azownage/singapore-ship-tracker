@@ -713,15 +713,45 @@ class AISTracker:
                 status_placeholder.text(f"✅ Risk API returned data for {len(risk_data)} vessels")
             
             # Log first 3 results for debugging
-            if risk_data and status_placeholder:
+            if risk_data:
+                debug_msgs = []
                 for idx, (imo, data) in enumerate(list(risk_data.items())[:3]):
-                    st.write(f"DEBUG IMO {imo}: Defects='{data.get('psc_defects')}', Detentions='{data.get('psc_detentions')}'")
+                    msg = f"DEBUG IMO {imo}: Defects='{data.get('psc_defects')}', Detentions='{data.get('psc_detentions')}'"
+                    debug_msgs.append(msg)
+                    st.write(msg)
+                st.session_state.risk_debug = debug_msgs
         else:
             compliance_data = {imo: compliance_cache.get(imo, {}) for imo in valid_imos}
             risk_data = {}
         
+        # Debug: Show risk_data keys and their types
+        if risk_data:
+            sample_keys = list(risk_data.keys())[:3]
+            lookup_debug = []
+            lookup_debug.append(f"risk_data has {len(risk_data)} keys")
+            lookup_debug.append(f"Sample risk_data keys: {sample_keys}")
+            lookup_debug.append(f"risk_data key types: {[type(k).__name__ for k in sample_keys]}")
+            st.session_state.psc_lookup_debug = lookup_debug
+            for msg in lookup_debug:
+                st.write(f"DEBUG: {msg}")
+        
+        psc_app_debug = []
         for idx, row in df.iterrows():
             imo = str(row['imo'])
+            
+            # Debug first 3 IMO lookups
+            if idx < 3:
+                psc_app_debug.append(f"Row {idx} - Looking for IMO '{imo}' (type: {type(imo).__name__})")
+                psc_app_debug.append(f"Row {idx} - IMO in risk_data: {imo in risk_data}")
+                if imo in risk_data:
+                    psc_app_debug.append(f"Row {idx} - risk_data[{imo}] = {risk_data[imo]}")
+                st.write(f"DEBUG: Row {idx} - Looking for IMO '{imo}' (type: {type(imo).__name__})")
+                st.write(f"DEBUG: Row {idx} - IMO in risk_data: {imo in risk_data}")
+                if imo in risk_data:
+                    st.write(f"DEBUG: Row {idx} - risk_data[{imo}] = {risk_data[imo]}")
+        
+        if psc_app_debug:
+            st.session_state.psc_application_debug = psc_app_debug
             
             # Apply compliance data (new or cached)
             if imo in compliance_data and compliance_data[imo]:
@@ -1263,6 +1293,24 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
 # ============= STREAMLIT UI =============
 st.title("🚢 Singapore Ship Tracker")
 st.markdown("Real-time vessel tracking with S&P Maritime compliance screening")
+
+# Debug Panel - Show persistent logs
+if 'risk_debug' in st.session_state or 'psc_application_debug' in st.session_state:
+    with st.expander("🔍 DEBUG: Risk API & PSC Data Flow", expanded=False):
+        if 'risk_debug' in st.session_state:
+            st.write("**Risk API Response (First 3):**")
+            for msg in st.session_state.risk_debug:
+                st.code(msg)
+        
+        if 'psc_application_debug' in st.session_state:
+            st.write("**PSC Data Application:**")
+            for msg in st.session_state.psc_application_debug:
+                st.code(msg)
+        
+        if 'psc_lookup_debug' in st.session_state:
+            st.write("**IMO Lookup Debug:**")
+            for msg in st.session_state.psc_lookup_debug:
+                st.code(msg)
 
 # Sidebar Configuration
 
