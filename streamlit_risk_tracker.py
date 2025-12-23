@@ -313,7 +313,7 @@ class SPShipsComplianceAPI:
             'cached_at': datetime.now(SGT).isoformat()
         }
     
-    def get_ship_compliance_by_imo_batch(self, imo_numbers: List[str]) -> Dict[str, Dict]:
+    def get_ship_compliance_by_imo_batch(self, imo_numbers: List[str], status_placeholder=None) -> Dict[str, Dict]:
         """Get compliance data for multiple IMOs (up to 100) in one call"""
         if not imo_numbers:
             return {}
@@ -321,11 +321,18 @@ class SPShipsComplianceAPI:
         cache = st.session_state.risk_data_cache
         uncached_imos = [imo for imo in imo_numbers if imo not in cache]
         
+        # Use provided status_placeholder or create new one
+        info_placeholder = status_placeholder if status_placeholder else st.empty()
+        
+        # Always show message, even if all are cached
+        total_vessels = len(imo_numbers)
         if not uncached_imos:
+            info_placeholder.info(f"🔍 Fetching compliance data for {total_vessels} vessels... 100% (all cached)")
+            time.sleep(0.5)  # Brief pause so user can see the message
+            info_placeholder.empty()
             return {imo: cache[imo] for imo in imo_numbers}
         
-        info_placeholder = st.empty()
-        info_placeholder.info(f"🔍 Fetching compliance data for {len(uncached_imos)} vessels... 0%")
+        info_placeholder.info(f"🔍 Fetching compliance data for {total_vessels} vessels ({len(uncached_imos)} new)... 0%")
         try:
             # Batch up to 100 IMOs per call
             batches = [uncached_imos[i:i+100] for i in range(0, len(uncached_imos), 100)]
@@ -352,7 +359,7 @@ class SPShipsComplianceAPI:
                 
                 # Update progress percentage after each batch
                 progress_pct = int(((batch_idx + 1) / len(batches)) * 100)
-                info_placeholder.info(f"🔍 Fetching compliance data for {len(uncached_imos)} vessels... {progress_pct}%")
+                info_placeholder.info(f"🔍 Fetching compliance data for {total_vessels} vessels ({len(uncached_imos)} new)... {progress_pct}%")
                 
                 time.sleep(0.5)  # Rate limiting
             
@@ -533,7 +540,7 @@ class AISTracker:
             st.session_state.last_save = time.time()
     
     def get_dataframe_with_compliance(self, sp_api: Optional[SPShipsComplianceAPI] = None, 
-                                     expiry_hours: Optional[int] = None) -> pd.DataFrame:
+                                     expiry_hours: Optional[int] = None, status_placeholder=None) -> pd.DataFrame:
         """Get dataframe with compliance indicators"""
         data = []
         now = datetime.now(SGT)
@@ -617,8 +624,8 @@ class AISTracker:
         
         compliance_cache = st.session_state.get('risk_data_cache', {})
         if valid_imos and sp_api:
-            # Use batch IMO lookup
-            compliance_data = sp_api.get_ship_compliance_by_imo_batch(valid_imos)
+            # Use batch IMO lookup - pass status_placeholder for progress updates
+            compliance_data = sp_api.get_ship_compliance_by_imo_batch(valid_imos, status_placeholder)
         else:
             compliance_data = {imo: compliance_cache.get(imo, {}) for imo in valid_imos}
         
@@ -1067,7 +1074,7 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
         del st.session_state.collection_status_placeholder
     
     # get_dataframe_with_compliance will show its own detailed progress message with vessel count and percentage
-    df = tracker.get_dataframe_with_compliance(sp_api, expiry_hours=vessel_expiry_hours)
+    df = tracker.get_dataframe_with_compliance(sp_api, expiry_hours=vessel_expiry_hours, status_placeholder=status_placeholder)
     
     # Mark collection as complete
     st.session_state.collection_in_progress = False
@@ -1313,9 +1320,12 @@ if not st.session_state.get('collection_in_progress', False):
         displayed_in_this_run = True
 
     if col2.button("📦 View Cached", use_container_width=True):
-        display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
-                           show_channels, show_fairways, selected_compliance, selected_sanctions, 
-                           selected_types, selected_nav_statuses, show_static_only)
+        if 'vessel_positions' not in st.session_state or not st.session_state.vessel_positions:
+            status_placeholder.info("ℹ️ No cached vessel data. Click 'Refresh Now' to collect AIS data.")
+        else:
+            display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
+                               show_channels, show_fairways, selected_compliance, selected_sanctions, 
+                               selected_types, selected_nav_statuses, show_static_only)
         st.session_state.data_loaded = True
         displayed_in_this_run = True
 else:
@@ -1341,8 +1351,12 @@ if st.session_state.get('show_details_imo') and sp_username and sp_password:
                             sp_username, sp_password)
 
 # Auto-display cached data on initial load or when filters change
-# Display if we haven't already displayed in this run AND cached data exists
-if not displayed_in_this_run and 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
-    display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
-                       show_channels, show_fairways, selected_compliance, selected_sanctions, 
-                       selected_types, selected_nav_statuses, show_static_only)
+# Display if we haven't already displayed in this run
+if not displayed_in_this_run:
+    if 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
+        display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
+                           show_channels, show_fairways, selected_compliance, selected_sanctions, 
+                           selected_types, selected_nav_statuses, show_static_only)
+    else:
+        # No cache data on initial load
+        st.info("ℹ️ No cached vessel data. Click 'Refresh Now' to collect AIS data.")
