@@ -951,8 +951,11 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         row_height = 35
         dynamic_height = header_height + (row_height * min(row_count, 20))  # Max 20 rows visible
         
-        # Use unique key to avoid duplicate element ID error
-        table_key = f"vessel_table_{len(df)}_{hash(tuple(df['mmsi'].tolist()))}"
+        # Use session-based counter for stable unique keys across reruns
+        if 'table_render_count' not in st.session_state:
+            st.session_state.table_render_count = 0
+        st.session_state.table_render_count += 1
+        table_key = f"vessel_table_{st.session_state.table_render_count}"
         
         selected_rows = st.dataframe(
             table_df, use_container_width=True, height=dynamic_height,
@@ -1191,6 +1194,9 @@ if col2.button("🔄 Retry IMO"):
 
 # Control buttons
 col1, col2, col3 = st.columns([1, 1, 4])
+
+displayed_in_this_run = False
+
 if col1.button("🔄 Refresh Now", type="primary"):
     st.session_state.last_refresh_time = time.time()
     update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_username, sp_password,
@@ -1198,12 +1204,14 @@ if col1.button("🔄 Refresh Now", type="primary"):
                   show_channels, show_fairways, selected_compliance, selected_sanctions, 
                   selected_types, selected_nav_statuses, show_static_only)
     st.session_state.data_loaded = True
+    displayed_in_this_run = True
 
 if col2.button("📦 View Cached"):
     display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
                        show_channels, show_fairways, selected_compliance, selected_sanctions, 
                        selected_types, selected_nav_statuses, show_static_only)
     st.session_state.data_loaded = True
+    displayed_in_this_run = True
 
 # Show vessel details if requested
 if st.session_state.get('show_details_imo') and sp_username and sp_password:
@@ -1212,7 +1220,8 @@ if st.session_state.get('show_details_imo') and sp_username and sp_password:
                             sp_username, sp_password)
 
 # Auto-display cached data when filters change (keeps map/table visible)
-if st.session_state.get('data_loaded') and 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
+# Only display if we haven't already displayed in this run
+if not displayed_in_this_run and st.session_state.get('data_loaded') and 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
     display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
                        show_channels, show_fairways, selected_compliance, selected_sanctions, 
                        selected_types, selected_nav_statuses, show_static_only)
