@@ -1201,7 +1201,20 @@ col1, col2 = st.columns(2)
 
 displayed_in_this_run = False
 
-if col1.button("🔄 Refresh Now", type="primary", use_container_width=True):
+# Auto-refresh logic - check first before buttons to show spinner at top
+auto_refresh_triggered = False
+if 'auto_refresh_enabled' in st.session_state and st.session_state.auto_refresh_enabled:
+    if 'last_refresh_time' not in st.session_state:
+        st.session_state.last_refresh_time = 0
+    
+    refresh_interval = st.session_state.get('refresh_interval', 60)
+    elapsed = time.time() - st.session_state.last_refresh_time
+    
+    if elapsed >= refresh_interval:
+        auto_refresh_triggered = True
+        st.session_state.last_refresh_time = time.time()
+
+if col1.button("🔄 Refresh Now", type="primary", use_container_width=True) or auto_refresh_triggered:
     st.session_state.refresh_in_progress = True  # Prevent filter changes from interrupting
     st.session_state.last_refresh_time = time.time()
     update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_username, sp_password,
@@ -1235,26 +1248,33 @@ if not displayed_in_this_run and st.session_state.get('data_loaded') and 'vessel
 # Auto-refresh
 st.sidebar.markdown("---")
 st.sidebar.markdown("### ⏱️ Auto-Refresh")
-auto_refresh = st.sidebar.checkbox("Enable auto-refresh", value=False)
+auto_refresh = st.sidebar.checkbox("Enable auto-refresh", value=st.session_state.get('auto_refresh_enabled', False))
+st.session_state.auto_refresh_enabled = auto_refresh
+
 if auto_refresh:
     refresh_interval = st.sidebar.selectbox("Refresh interval", [30, 60, 120, 300, 600],
-                                           format_func=lambda x: f"{x}s" if x < 60 else f"{x//60} min", index=1)
+                                           format_func=lambda x: f"{x}s" if x < 60 else f"{x//60} min", 
+                                           index=st.session_state.get('refresh_interval_index', 1))
+    # Store the index for persistence
+    st.session_state.refresh_interval_index = [30, 60, 120, 300, 600].index(refresh_interval)
+    st.session_state.refresh_interval = refresh_interval
+    
     if 'last_refresh_time' not in st.session_state:
         st.session_state.last_refresh_time = 0
+    
     elapsed = time.time() - st.session_state.last_refresh_time
-    if elapsed >= refresh_interval:
-        st.session_state.last_refresh_time = time.time()
-        update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_username, sp_password,
-                      vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
-                      show_channels, show_fairways, selected_compliance, selected_sanctions, 
-                      selected_types, selected_nav_statuses, show_static_only)
-        st.session_state.data_loaded = True
-    else:
-        remaining = int(refresh_interval - elapsed)
+    remaining = int(refresh_interval - elapsed)
+    
+    if remaining > 0:
         mins, secs = divmod(remaining, 60)
         st.sidebar.info(f"⏱️ Next refresh in **{mins}m {secs}s**" if mins > 0 else f"⏱️ Next refresh in **{secs}s**")
         time.sleep(1)
         st.rerun()
+    # If remaining <= 0, the auto-refresh will trigger at the top of the page
+else:
+    # Clear auto-refresh state when disabled
+    if 'last_refresh_time' in st.session_state:
+        del st.session_state.last_refresh_time
 
 # Show initial message only if no data loaded yet
 if 'data_loaded' not in st.session_state:
