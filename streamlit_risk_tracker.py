@@ -1351,12 +1351,12 @@ if st.session_state.get('show_details_imo') and sp_username and sp_password:
                             sp_username, sp_password)
 
 # Auto-display cached data on initial load or when filters change
-# Display if we haven't already displayed in this run
-if not displayed_in_this_run:
+# Display if we haven't already displayed in this run AND not currently collecting data
+if not displayed_in_this_run and not st.session_state.get('collection_in_progress', False):
     if 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
         display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
                            show_channels, show_fairways, selected_compliance, selected_sanctions, 
                            selected_types, selected_nav_statuses, show_static_only)
     else:
-        # No cache data on initial load
+        # No cache data on initial load (only show if not collecting)
         st.info("ℹ️ No cached vessel data. Click 'Refresh Now' to collect AIS data.")
