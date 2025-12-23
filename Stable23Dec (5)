@@ -681,9 +681,9 @@ def create_vessel_layers(df: pd.DataFrame, zoom: float = 10, display_mode: str =
             f"IMO: {row['imo']}<br/>MMSI: {row['mmsi']}<br/>"
             f"Type: {row['type_name']}<br/>Size: {dim_text}<br/>"
             f"Heading: {row['heading']:.0f}°<br/>Speed: {row['speed']:.1f} kts<br/>"
-            f"Status: {row['nav_status_name']}<br/>Compliance: {legal_emoji}<br/>"
+            f"Nav Status: {row['nav_status_name']}<br/>"
             f"Dest: {row['destination']}<br/>"
-            f"Last Seen: {last_seen_text}"
+            f"Last Seen: {last_seen_text}<br/>Legal Overall: {legal_emoji}"
         )
         
         vessel_data.append({
@@ -767,12 +767,12 @@ def show_vessel_details_panel(imo: str, vessel_name: str, sp_username: str, sp_p
             st.markdown(f"**Year Built:** {details.get('year_built', 'N/A')}")
             st.markdown(f"**GT:** {details.get('gross_tonnage', 'N/A')}")
             st.markdown(f"**DWT:** {details.get('deadweight', 'N/A')}")
-            st.markdown(f"**Status:** {details.get('status', 'N/A')}")
+            st.markdown(f"**Nav Status:** {details.get('status', 'N/A')}")
         with col3:
             st.markdown(f"**Class:** {details.get('classification', 'N/A')}")
             legal = details.get('legal_overall', 0)
             legal_emoji = {2: '🔴 Severe', 1: '🟡 Warning', 0: '🟢 Clear'}.get(legal, '❓ Unknown')
-            st.markdown(f"**Legal Status:** {legal_emoji}")
+            st.markdown(f"**Legal Overall:** {legal_emoji}")
             dark_ind = details.get('dark_activity_indicator', 0)
             dark_emoji = {2: '🔴 Severe', 1: '🟡 Warning', 0: '🟢 Clear'}.get(dark_ind, '❓ Unknown')
             st.markdown(f"**Dark Activity:** {dark_emoji}")
@@ -963,7 +963,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         # Rename columns for display
         table_df.columns = [
             'Name', 'IMO', 'MMSI', 'Type', 'Nav Status',
-            'Legal', 'UN', 'OFAC', 'EU', 'UK',
+            'Legal Overall', 'UN', 'OFAC', 'EU', 'UK',
             'Own UN', 'Own OFAC', 'Dark', 'STS',
             'Port 3m', 'Port 6m', 'Port 12m',
             'Flag Sanc', 'Flag Disp'
@@ -1196,7 +1196,7 @@ if st.session_state.prev_quick_filter != quick_filter and quick_filter != "Custo
 
 st.sidebar.subheader("Compliance")
 compliance_options = ["All", "Severe (🔴)", "Warning (🟡)", "Clear (🟢)"]
-selected_compliance = st.sidebar.multiselect("Legal Status", compliance_options, 
+selected_compliance = st.sidebar.multiselect("Legal Overall", compliance_options, 
                                              default=st.session_state.get('compliance_filter', default_compliance),
                                              key="compliance_filter")
 
@@ -1323,7 +1323,7 @@ else:
                       selected_types, selected_nav_statuses, status_placeholder)
         st.session_state.data_loaded = True
         st.session_state.refresh_in_progress = False
-        displayed_in_this_run = True
+        st.rerun()
     else:
         if 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
             display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
