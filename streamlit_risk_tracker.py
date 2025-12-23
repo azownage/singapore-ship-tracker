@@ -269,7 +269,7 @@ class SPShipsComplianceAPI:
         return None
     
     def batch_get_imo_by_mmsi(self, mmsi_list: List[str]) -> Dict[str, str]:
-        """Look up IMO numbers for multiple MMSIs - also fetches compliance data"""
+        """Look up IMO numbers for multiple MMSIs - also fetches compliance data in same call"""
         results = {}
         cache = st.session_state.mmsi_to_imo_cache
         uncached_mmsis = [m for m in mmsi_list if m not in cache or cache.get(m) is None]
@@ -283,7 +283,7 @@ class SPShipsComplianceAPI:
             return results
         
         # Fetch compliance data for uncached MMSIs (this also caches IMOs)
-        # No separate message needed - this will be shown as part of "Fetching compliance data"
+        # This happens silently as it's part of the overall compliance fetching process
         for mmsi in uncached_mmsis:
             imo = self.get_imo_by_mmsi(mmsi)
             if imo:
@@ -325,13 +325,14 @@ class SPShipsComplianceAPI:
             return {imo: cache[imo] for imo in imo_numbers}
         
         info_placeholder = st.empty()
-        info_placeholder.info(f"🔍 Fetching compliance data for {len(uncached_imos)} vessels...")
+        progress_bar = st.progress(0.0)
+        info_placeholder.info(f"🔍 Fetching compliance data for {len(uncached_imos)} vessels... (0/{len(uncached_imos)})")
         try:
             # Batch up to 100 IMOs per call
             batches = [uncached_imos[i:i+100] for i in range(0, len(uncached_imos), 100)]
             received_imos = set()
             
-            for batch in batches:
+            for batch_idx, batch in enumerate(batches):
                 imo_string = ','.join(batch)
                 url = f"{self.base_url_imo}?imoNumbers={imo_string}"
                 response = requests.get(url, auth=(self.username, self.password), timeout=30)
@@ -350,6 +351,12 @@ class SPShipsComplianceAPI:
                                     received_imos.add(imo)
                                     cache[imo] = self.parse_compliance_from_ship_detail(detail)
                 
+                # Update progress after each batch
+                progress = (batch_idx + 1) / len(batches)
+                vessels_processed = len(received_imos)
+                progress_bar.progress(progress)
+                info_placeholder.info(f"🔍 Fetching compliance data for {len(uncached_imos)} vessels... ({vessels_processed}/{len(uncached_imos)})")
+                
                 time.sleep(0.5)  # Rate limiting
             
             # Mark IMOs that weren't returned as checked but not found
@@ -366,6 +373,7 @@ class SPShipsComplianceAPI:
         except Exception as e:
             st.error(f"⚠️ S&P Ships API error: {str(e)}")
         finally:
+            progress_bar.empty()
             info_placeholder.empty()
         
         return {imo: cache.get(imo, {}) for imo in imo_numbers}
@@ -449,18 +457,21 @@ class AISTracker:
                 await ws.send(json.dumps(subscription))
                 start_time = time.time()
                 
-                # Store start time in session state for countdown
-                if 'collection_status_placeholder' in st.session_state:
+                # Store start time and progress bar in session state
+                if 'collection_progress_bar' in st.session_state and 'collection_status_placeholder' in st.session_state:
                     st.session_state.collection_start_time = start_time
                     st.session_state.collection_duration_seconds = duration
                 
                 async for message_json in ws:
-                    # Update countdown
+                    # Update progress bar
                     elapsed = time.time() - start_time
-                    remaining = int(duration - elapsed)
-                    if 'collection_status_placeholder' in st.session_state and remaining > 0:
+                    progress = min(elapsed / duration, 1.0)
+                    
+                    if 'collection_progress_bar' in st.session_state and 'collection_status_placeholder' in st.session_state:
+                        progress_bar = st.session_state.collection_progress_bar
                         placeholder = st.session_state.collection_status_placeholder
-                        placeholder.info(f'🔄 Collecting AIS data... {remaining} seconds remaining')
+                        progress_bar.progress(progress)
+                        placeholder.info(f'🔄 Collecting AIS data... {int(progress*100)}%')
                     
                     if time.time() - start_time > duration:
                         break
@@ -1033,13 +1044,15 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
                            show_channels, show_fairways, selected_compliance, selected_sanctions, 
                            selected_types, selected_nav_statuses, show_static_only)
     
-    # Show initial status message below buttons
-    status_placeholder.info(f'🔄 Collecting AIS data... {duration} seconds remaining')
+    # Show initial status message and create progress bar below buttons
+    status_placeholder.info(f'🔄 Collecting AIS data... 0%')
+    progress_bar = st.progress(0.0)
     
-    # Mark collection as in progress and store duration and placeholder
+    # Mark collection as in progress and store duration, placeholder, and progress bar
     st.session_state.collection_in_progress = True
     st.session_state.collection_duration = duration
     st.session_state.collection_status_placeholder = status_placeholder
+    st.session_state.collection_progress_bar = progress_bar
     
     # Collect data without spinner
     tracker = AISTracker(use_cached_positions=True)
@@ -1050,18 +1063,27 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
             st.session_state.collection_in_progress = False
             if 'collection_status_placeholder' in st.session_state:
                 del st.session_state.collection_status_placeholder
+            if 'collection_progress_bar' in st.session_state:
+                del st.session_state.collection_progress_bar
+            progress_bar.empty()
             status_placeholder.error(f"⚠️ Error collecting AIS data: {e}")
             return
     else:
         st.session_state.collection_in_progress = False
         if 'collection_status_placeholder' in st.session_state:
             del st.session_state.collection_status_placeholder
+        if 'collection_progress_bar' in st.session_state:
+            del st.session_state.collection_progress_bar
+        progress_bar.empty()
         status_placeholder.warning("⚠️ No AISStream API key provided.")
         return
     
-    # Clean up the placeholder reference
+    # Clean up the placeholder references
     if 'collection_status_placeholder' in st.session_state:
         del st.session_state.collection_status_placeholder
+    if 'collection_progress_bar' in st.session_state:
+        del st.session_state.collection_progress_bar
+    progress_bar.empty()
     
     # Show fetching compliance data message
     status_placeholder.info('🔍 Fetching compliance data from S&P...')
@@ -1215,8 +1237,6 @@ selected_nav_statuses = st.sidebar.multiselect("Status", nav_status_options, def
                                                key="nav_status_filter")
 
 st.sidebar.header("💾 Cache Statistics")
-mmsi_cache = st.session_state.get('mmsi_to_imo_cache', {})
-mmsi_imo_found = len([v for v in mmsi_cache.values() if v])
 vessel_count = len([k for k in st.session_state.get('vessel_positions', {}).keys() if k != '_last_update'])
 last_update_fmt = format_datetime(st.session_state.get('last_data_update', 'Never'))
 
@@ -1225,8 +1245,6 @@ st.sidebar.info(f"""**Cached Vessels:** {vessel_count}
 **Static Data:** {len(st.session_state.ship_static_cache)} vessels
 
 **Compliance:** {len(st.session_state.risk_data_cache)} vessels
-
-**MMSI→IMO:** {mmsi_imo_found} found
 
 **Last Update:** {last_update_fmt}""")
 
@@ -1239,6 +1257,50 @@ if st.sidebar.button("🗑️ Clear All Cache"):
     save_cache({}, {}, {}, {})
     st.sidebar.success("Cache cleared!")
     st.rerun()
+
+# Auto-refresh (place before buttons so it always displays)
+st.sidebar.markdown("---")
+st.sidebar.markdown("### ⏱️ Auto-Refresh")
+auto_refresh = st.sidebar.checkbox("Enable auto-refresh", value=st.session_state.get('auto_refresh_enabled', False))
+st.session_state.auto_refresh_enabled = auto_refresh
+
+if auto_refresh:
+    refresh_options = {"30 seconds": 30, "1 minute": 60, "2 minutes": 120, "5 minutes": 300, "10 minutes": 600}
+    selected_interval = st.sidebar.selectbox("Refresh interval:", list(refresh_options.keys()), index=1)
+    st.session_state.refresh_interval = refresh_options[selected_interval]
+    
+    if 'last_refresh_time' in st.session_state:
+        elapsed = time.time() - st.session_state.last_refresh_time
+        remaining = max(0, st.session_state.refresh_interval - elapsed)
+        st.sidebar.info(f"⏳ Next refresh in {int(remaining)}s")
+        if remaining <= 1:
+            time.sleep(0.5)
+            st.rerun()
+        else:
+            time.sleep(1)
+            st.rerun()
+    else:
+        st.info("👆 Click 'Refresh Now' to start collecting AIS data")
+else:
+    st.info("👆 Click 'Refresh Now' to start collecting AIS data")
+
+# Legend (place before buttons so it always displays)
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 🎨 Legend")
+st.sidebar.markdown("""
+**Vessel Compliance Status:**
+- 🔴 Severe
+- 🟡 Warning
+- 🟢 Clear
+- ❓ Unknown
+
+**Maritime Zones:**
+- 🔵 Anchorages
+- 🟡 Channels
+- 🟠 Fairways
+""")
+st.sidebar.markdown("---")
+st.sidebar.caption("Data: AISStream.io + S&P Global Maritime")
 
 # Control buttons
 # Control buttons - put them side by side with equal width
@@ -1274,7 +1336,6 @@ if not st.session_state.get('collection_in_progress', False):
         st.session_state.data_loaded = True
         st.session_state.refresh_in_progress = False  # Reset flag after refresh completes
         displayed_in_this_run = True
-        st.stop()  # Stop execution here to prevent showing cached data again below
 
     if col2.button("📦 View Cached", use_container_width=True):
         display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
@@ -1297,7 +1358,6 @@ else:
                            show_channels, show_fairways, selected_compliance, selected_sanctions, 
                            selected_types, selected_nav_statuses, show_static_only)
         displayed_in_this_run = True
-        st.stop()  # Stop here to prevent further execution
 
 # Show vessel details if requested
 if st.session_state.get('show_details_imo') and sp_username and sp_password:
@@ -1311,65 +1371,3 @@ if not displayed_in_this_run and 'vessel_positions' in st.session_state and st.s
     display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
                        show_channels, show_fairways, selected_compliance, selected_sanctions, 
                        selected_types, selected_nav_statuses, show_static_only)
-
-# Auto-refresh
-st.sidebar.markdown("---")
-st.sidebar.markdown("### ⏱️ Auto-Refresh")
-auto_refresh = st.sidebar.checkbox("Enable auto-refresh", value=st.session_state.get('auto_refresh_enabled', False))
-st.session_state.auto_refresh_enabled = auto_refresh
-
-if auto_refresh:
-    refresh_interval = st.sidebar.selectbox("Refresh interval", [30, 60, 120, 300, 600],
-                                           format_func=lambda x: f"{x}s" if x < 60 else f"{x//60} min", 
-                                           index=st.session_state.get('refresh_interval_index', 1))
-    # Store the index for persistence
-    st.session_state.refresh_interval_index = [30, 60, 120, 300, 600].index(refresh_interval)
-    st.session_state.refresh_interval = refresh_interval
-    
-    if 'last_refresh_time' not in st.session_state:
-        st.session_state.last_refresh_time = 0
-    
-    elapsed = time.time() - st.session_state.last_refresh_time
-    remaining = int(refresh_interval - elapsed)
-    
-    if remaining > 0:
-        mins, secs = divmod(remaining, 60)
-        st.sidebar.info(f"⏱️ Next refresh in **{mins}m {secs}s**" if mins > 0 else f"⏱️ Next refresh in **{secs}s**")
-        time.sleep(1)
-        st.rerun()
-    # If remaining <= 0, the auto-refresh will trigger at the top of the page
-else:
-    # Clear auto-refresh state when disabled
-    if 'last_refresh_time' in st.session_state:
-        del st.session_state.last_refresh_time
-
-# Show initial message only if no data loaded yet
-if 'data_loaded' not in st.session_state:
-    st.session_state.data_loaded = False
-
-if not st.session_state.data_loaded:
-    if 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
-        cached_count = len([k for k in st.session_state.vessel_positions.keys() if k != '_last_update'])
-        if cached_count > 0:
-            st.info(f"📦 Found {cached_count} cached vessels. Click 'View Cached' to display, or 'Refresh Now' for fresh data.")
-        else:
-            st.info("👆 Click 'Refresh Now' to start collecting AIS data")
-    else:
-        st.info("👆 Click 'Refresh Now' to start collecting AIS data")
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 🎨 Legend")
-st.sidebar.markdown("""
-**Vessel Compliance Status:**
-- 🔴 Severe
-- 🟡 Warning
-- 🟢 Clear
-- ❓ Unknown
-
-**Maritime Zones:**
-- 🔵 Anchorages
-- 🟡 Channels
-- 🟠 Fairways
-""")
-st.sidebar.markdown("---")
-st.sidebar.caption("Data: AISStream.io + S&P Global Maritime")
