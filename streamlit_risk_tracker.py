@@ -1279,10 +1279,6 @@ if auto_refresh:
         else:
             time.sleep(1)
             st.rerun()
-    else:
-        st.info("👆 Click 'Refresh Now' to start collecting AIS data")
-else:
-    st.info("👆 Click 'Refresh Now' to start collecting AIS data")
 
 # Legend (place before buttons so it always displays)
 st.sidebar.markdown("---")
