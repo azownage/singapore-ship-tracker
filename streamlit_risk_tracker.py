@@ -701,6 +701,8 @@ class AISTracker:
                         valid_imos.append(found_imo)
         
         compliance_cache = st.session_state.get('risk_data_cache', {})
+        psc_cache = st.session_state.get('psc_risk_cache', {})  # Separate cache for PSC data
+        
         if valid_imos and sp_api:
             # Use batch IMO lookup - pass status_placeholder for progress updates
             compliance_data = sp_api.get_ship_compliance_by_imo_batch(valid_imos, status_placeholder)
@@ -712,6 +714,11 @@ class AISTracker:
             if status_placeholder:
                 status_placeholder.text(f"✅ Risk API returned data for {len(risk_data)} vessels")
             
+            # Cache the PSC risk data for later use
+            if risk_data:
+                psc_cache.update(risk_data)
+                st.session_state.psc_risk_cache = psc_cache
+            
             # Log first 3 results for debugging
             if risk_data:
                 debug_msgs = []
@@ -721,8 +728,10 @@ class AISTracker:
                     st.write(msg)
                 st.session_state.risk_debug = debug_msgs
         else:
+            # Use cached data when sp_api is None (displaying cached vessels)
             compliance_data = {imo: compliance_cache.get(imo, {}) for imo in valid_imos}
-            risk_data = {}
+            risk_data = {imo: psc_cache.get(imo, {}) for imo in valid_imos if imo in psc_cache}
+            st.write(f"DEBUG: Using cached PSC data for {len(risk_data)} vessels")
         
         # Debug: Show risk_data keys and their types
         if risk_data:
