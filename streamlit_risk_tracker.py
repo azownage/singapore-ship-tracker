@@ -304,17 +304,41 @@ class SPShipsAPI:
         save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache, cache)
         return results
 
-class SPMaritimeAPI:
-    """S&P Maritime API for compliance screening"""
+class SPShipsComplianceAPI:
+    """S&P Ships API for compliance data via ship details"""
     def __init__(self, username: str, password: str):
         self.username = username
         self.password = password
-        self.base_url = "https://webservices.maritime.spglobal.com/RiskAndCompliance/CompliancesByImos"
+        self.base_url_imo = "https://shipsapi.maritime.spglobal.com/MaritimeWCF/APSShipService.svc/RESTFul/GetShipsByIHSLRorIMONumbersAll"
+        self.base_url_mmsi = "https://shipsapi.maritime.spglobal.com/MaritimeWCF/APSShipService.svc/RESTFul/GetShipDataByMMSI"
     
-    def get_ship_compliance_data(self, imo_numbers: List[str]) -> Dict[str, Dict]:
-        """Get compliance indicators for multiple IMO numbers with caching"""
+    def parse_compliance_from_ship_detail(self, ship_detail: Dict) -> Dict:
+        """Extract compliance indicators from APSShipDetail"""
+        return {
+            'legal_overall': int(ship_detail.get('LegalOverall', -1)),
+            'ship_bes_sanction': int(ship_detail.get('ShipBESSanctionList', -1)),
+            'ship_eu_sanction': int(ship_detail.get('ShipEUSanctionList', -1)),
+            'ship_ofac_sanction': int(ship_detail.get('ShipOFACSanctionList', -1)),
+            'ship_un_sanction': int(ship_detail.get('ShipUNSanctionList', -1)),
+            'dark_activity': int(ship_detail.get('ShipDarkActivityIndicator', -1)),
+            'flag_disputed': int(ship_detail.get('ShipFlagDisputed', -1)),
+            'flag_sanctioned': int(ship_detail.get('ShipFlagSanctionedCountry', -1)),
+            'port_call_3m': int(ship_detail.get('ShipSanctionedCountryPortCallLast3m', -1)),
+            'port_call_6m': int(ship_detail.get('ShipSanctionedCountryPortCallLast6m', -1)),
+            'port_call_12m': int(ship_detail.get('ShipSanctionedCountryPortCallLast12m', -1)),
+            'owner_ofac': int(ship_detail.get('ShipOwnerOFACSanctionList', -1)),
+            'owner_un': int(ship_detail.get('ShipOwnerUNSanctionList', -1)),
+            'owner_eu': int(ship_detail.get('ShipOwnerEUSanctionList', -1)),
+            'owner_bes': int(ship_detail.get('ShipOwnerBESSanctionList', -1)),
+            'sts_partner_non_compliance': int(ship_detail.get('ShipSTSPartnerNonComplianceLast12m', -1)),
+            'cached_at': datetime.now(SGT).isoformat()
+        }
+    
+    def get_ship_compliance_by_imo_batch(self, imo_numbers: List[str]) -> Dict[str, Dict]:
+        """Get compliance data for multiple IMOs (up to 100) in one call"""
         if not imo_numbers:
             return {}
+        
         cache = st.session_state.risk_data_cache
         uncached_imos = [imo for imo in imo_numbers if imo not in cache]
         
@@ -323,44 +347,36 @@ class SPMaritimeAPI:
         
         st.info(f"🔍 Fetching compliance data for {len(uncached_imos)} vessels...")
         try:
+            # Batch up to 100 IMOs per call
             batches = [uncached_imos[i:i+100] for i in range(0, len(uncached_imos), 100)]
             received_imos = set()
+            
             for batch in batches:
-                url = f"{self.base_url}?imos={','.join(batch)}"
+                imo_string = ','.join(batch)
+                url = f"{self.base_url_imo}?imoNumbers={imo_string}"
                 response = requests.get(url, auth=(self.username, self.password), timeout=30)
+                
                 if response.status_code == 200:
                     data = response.json()
-                    if isinstance(data, list):
-                        for ship in data:
-                            imo = str(ship.get('lrimoShipNo', ''))
-                            if not imo:
-                                continue
-                            received_imos.add(imo)
-                            cache[imo] = {
-                                'legal_overall': ship.get('legalOverall', 0),
-                                'ship_bes_sanction': ship.get('shipBESSanctionList', 0),
-                                'ship_eu_sanction': ship.get('shipEUSanctionList', 0),
-                                'ship_ofac_sanction': ship.get('shipOFACSanctionList', 0),
-                                'ship_un_sanction': ship.get('shipUNSanctionList', 0),
-                                'dark_activity': ship.get('shipDarkActivityIndicator', 0),
-                                'flag_disputed': ship.get('shipFlagDisputed', 0),
-                                'flag_sanctioned': ship.get('shipFlagSanctionedCountry', 0),
-                                'port_call_3m': ship.get('shipSanctionedCountryPortCallLast3m', 0),
-                                'port_call_6m': ship.get('shipSanctionedCountryPortCallLast6m', 0),
-                                'port_call_12m': ship.get('shipSanctionedCountryPortCallLast12m', 0),
-                                'owner_ofac': ship.get('shipOwnerOFACSanctionList', 0),
-                                'owner_un': ship.get('shipOwnerUNSanctionList', 0),
-                                'owner_eu': ship.get('shipOwnerEUSanctionList', 0),
-                                'owner_bes': ship.get('shipOwnerBESSanctionList', 0),
-                                'sts_partner_non_compliance': ship.get('shipSTSPartnerNonComplianceLast12m', 0),
-                                'cached_at': datetime.now(SGT).isoformat()
-                            }
-                time.sleep(0.5)
+                    # Response structure: {"shipCount": 3, "ShipResult": [...]}
+                    if 'ShipResult' in data and data['ShipResult']:
+                        ship_results = data['ShipResult'] if isinstance(data['ShipResult'], list) else [data['ShipResult']]
+                        
+                        for ship_result in ship_results:
+                            if 'APSShipDetail' in ship_result:
+                                detail = ship_result['APSShipDetail']
+                                imo = str(detail.get('IHSLRorIMOShipNo', ''))
+                                if imo:
+                                    received_imos.add(imo)
+                                    cache[imo] = self.parse_compliance_from_ship_detail(detail)
+                
+                time.sleep(0.5)  # Rate limiting
             
+            # Mark IMOs that weren't returned as checked but not found
             for imo in uncached_imos:
                 if imo not in received_imos:
                     cache[imo] = {
-                        'legal_overall': 0,
+                        'legal_overall': -1,
                         'checked_but_not_found': True,
                         'cached_at': datetime.now(SGT).isoformat()
                     }
@@ -368,8 +384,50 @@ class SPMaritimeAPI:
             st.session_state.risk_data_cache = cache
             save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
         except Exception as e:
-            st.error(f"⚠️ S&P API error: {str(e)}")
+            st.error(f"⚠️ S&P Ships API error: {str(e)}")
+        
         return {imo: cache.get(imo, {}) for imo in imo_numbers}
+    
+    def get_ship_compliance_by_mmsi(self, mmsi: str) -> Dict:
+        """Get compliance data for single MMSI"""
+        if not mmsi:
+            return {}
+        
+        # Check if we already have this MMSI's compliance data via IMO
+        cache = st.session_state.risk_data_cache
+        mmsi_cache = st.session_state.mmsi_to_imo_cache
+        
+        if mmsi in mmsi_cache and mmsi_cache[mmsi] and mmsi_cache[mmsi] in cache:
+            return cache[mmsi_cache[mmsi]]
+        
+        try:
+            url = f"{self.base_url_mmsi}?mmsi={mmsi}"
+            response = requests.get(url, auth=(self.username, self.password), timeout=30)
+            
+            if response.status_code == 200:
+                data = response.json()
+                # Response structure: {"APSShipDetail": {...}, "APSStatus": {...}}
+                if 'APSShipDetail' in data:
+                    detail = data['APSShipDetail']
+                    imo = str(detail.get('IHSLRorIMOShipNo', ''))
+                    
+                    if imo:
+                        # Cache the IMO mapping
+                        mmsi_cache[mmsi] = imo
+                        st.session_state.mmsi_to_imo_cache = mmsi_cache
+                        
+                        # Parse and cache compliance data
+                        compliance = self.parse_compliance_from_ship_detail(detail)
+                        cache[imo] = compliance
+                        st.session_state.risk_data_cache = cache
+                        save_cache(st.session_state.ship_static_cache, cache, mmsi_cache)
+                        return compliance
+            
+            time.sleep(0.1)  # Rate limiting
+        except Exception as e:
+            st.error(f"⚠️ S&P Ships API error for MMSI {mmsi}: {str(e)}")
+        
+        return {}
 
 class AISTracker:
     """AIS data collection and vessel tracking"""
@@ -560,7 +618,8 @@ class AISTracker:
         
         compliance_cache = st.session_state.get('risk_data_cache', {})
         if valid_imos and sp_api:
-            compliance_data = sp_api.get_ship_compliance_data(valid_imos)
+            # Use batch IMO lookup
+            compliance_data = sp_api.get_ship_compliance_by_imo_batch(valid_imos)
         else:
             compliance_data = {imo: compliance_cache.get(imo, {}) for imo in valid_imos}
         
@@ -870,38 +929,21 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         # Sort by legal_overall: default descending order (2, 1, 0, -1) from top to bottom
         display_df = df.copy().sort_values(['legal_overall', 'name'], ascending=[False, True])
         
-        # Create sortable emoji strings using zero-width Unicode characters
-        # These are invisible but affect sort order
-        # U+200D = ZERO WIDTH JOINER (higher unicode = sorts later)
-        # U+200C = ZERO WIDTH NON-JOINER
-        # U+200B = ZERO WIDTH SPACE (lower unicode = sorts earlier)
-        def create_sortable_emoji(value):
-            emoji = format_compliance_value(value)
-            # Use different zero-width characters to control sort order
-            if value == 2:  # Severe - should sort first in descending
-                return f"\u200D\u200D\u200D{emoji}"  # Three ZWJ
-            elif value == 1:  # Warning
-                return f"\u200D\u200D{emoji}"  # Two ZWJ
-            elif value == 0:  # Clear
-                return f"\u200D{emoji}"  # One ZWJ
-            else:  # -1 Unknown - should sort last in descending
-                return f"\u200B{emoji}"  # ZWS (lowest unicode)
-        
-        # Create sortable display columns
-        display_df['legal_display'] = display_df['legal_overall'].apply(create_sortable_emoji)
-        display_df['un_display'] = display_df['un_sanction'].apply(create_sortable_emoji)
-        display_df['ofac_display'] = display_df['ofac_sanction'].apply(create_sortable_emoji)
-        display_df['eu_display'] = display_df['eu_sanction'].apply(create_sortable_emoji)
-        display_df['bes_display'] = display_df['bes_sanction'].apply(create_sortable_emoji)
-        display_df['owner_un_display'] = display_df['owner_un'].apply(create_sortable_emoji)
-        display_df['owner_ofac_display'] = display_df['owner_ofac'].apply(create_sortable_emoji)
-        display_df['dark_display'] = display_df['dark_activity'].apply(create_sortable_emoji)
-        display_df['sts_display'] = display_df['sts_partner_non_compliance'].apply(create_sortable_emoji)
-        display_df['port3m_display'] = display_df['port_call_3m'].apply(create_sortable_emoji)
-        display_df['port6m_display'] = display_df['port_call_6m'].apply(create_sortable_emoji)
-        display_df['port12m_display'] = display_df['port_call_12m'].apply(create_sortable_emoji)
-        display_df['flag_sanc_display'] = display_df['flag_sanctioned'].apply(create_sortable_emoji)
-        display_df['flag_disp_display'] = display_df['flag_disputed'].apply(create_sortable_emoji)
+        # Create display columns with emojis (simple, no sorting tricks)
+        display_df['legal_display'] = display_df['legal_overall'].apply(format_compliance_value)
+        display_df['un_display'] = display_df['un_sanction'].apply(format_compliance_value)
+        display_df['ofac_display'] = display_df['ofac_sanction'].apply(format_compliance_value)
+        display_df['eu_display'] = display_df['eu_sanction'].apply(format_compliance_value)
+        display_df['bes_display'] = display_df['bes_sanction'].apply(format_compliance_value)
+        display_df['owner_un_display'] = display_df['owner_un'].apply(format_compliance_value)
+        display_df['owner_ofac_display'] = display_df['owner_ofac'].apply(format_compliance_value)
+        display_df['dark_display'] = display_df['dark_activity'].apply(format_compliance_value)
+        display_df['sts_display'] = display_df['sts_partner_non_compliance'].apply(format_compliance_value)
+        display_df['port3m_display'] = display_df['port_call_3m'].apply(format_compliance_value)
+        display_df['port6m_display'] = display_df['port_call_6m'].apply(format_compliance_value)
+        display_df['port12m_display'] = display_df['port_call_12m'].apply(format_compliance_value)
+        display_df['flag_sanc_display'] = display_df['flag_sanctioned'].apply(format_compliance_value)
+        display_df['flag_disp_display'] = display_df['flag_disputed'].apply(format_compliance_value)
         
         # Create table with display columns only
         table_df = display_df[[
@@ -985,7 +1027,7 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
                   show_channels, show_fairways, selected_compliance, selected_sanctions, 
                   selected_types, selected_nav_statuses, show_static_only):
     """Collect data and update display"""
-    sp_api = SPMaritimeAPI(sp_username, sp_password) if enable_compliance and sp_username and sp_password else None
+    sp_api = SPShipsComplianceAPI(sp_username, sp_password) if enable_compliance and sp_username and sp_password else None
     ships_api = SPShipsAPI(sp_username, sp_password) if enable_compliance and sp_username and sp_password else None
     
     with st.spinner(f'🔄 Collecting AIS data for {duration} seconds...'):
