@@ -1363,7 +1363,7 @@ st.sidebar.header("💾 Cache Statistics")
 vessel_count = len([k for k in st.session_state.get('vessel_positions', {}).keys() if k != '_last_update'])
 last_update_fmt = format_datetime(st.session_state.get('last_data_update', 'Never'))
 
-st.sidebar.info(f"""**Cached Vessels:** {vessel_count}
+st.sidebar.info(f"""**Cached:** {vessel_count} vessels
 
 **Static Data:** {len(st.session_state.ship_static_cache)} vessels
 
