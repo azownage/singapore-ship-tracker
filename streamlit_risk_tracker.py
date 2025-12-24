@@ -859,8 +859,7 @@ def create_vessel_layers(df: pd.DataFrame, zoom: float = 10, display_mode: str =
             get_line_color=[50, 50, 50, 100], line_width_min_pixels=1,
             pickable=True, auto_highlight=True, 
             extruded=True,  # Enable 3D extrusion
-            get_elevation='elevation',  # Use calculated elevation
-            elevation_scale=50  # Scale multiplier for visibility (50x to make 20-50m visible on map)
+            get_elevation='elevation'  # Use actual vessel heights: 20m, 35m, or 50m (NO scaling)
         ))
     return layers
 
