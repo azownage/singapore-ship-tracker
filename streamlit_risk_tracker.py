@@ -806,7 +806,7 @@ def create_vessel_layers(df: pd.DataFrame, zoom: float = 10, display_mode: str =
         last_seen_text = format_datetime(row['last_seen']) if row['last_seen'] else 'Unknown'
         
         # Format IMO - show blank if 0
-        imo_display = row['imo'] if row['imo'] != '0' and row['imo'] != 0 else 'N/A'
+        imo_display = row['imo'] if row['imo'] != '0' and row['imo'] != 0 else ''
         
         tooltip_text = (
             f"<b>{row['name']}</b><br/>"
