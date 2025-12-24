@@ -472,8 +472,11 @@ class SPShipsComplianceAPI:
                                 'psc_detentions': psc_det,
                                 'risk_cached_at': datetime.now(SGT).isoformat()
                             }
+                elif response.status_code == 422:
+                    # 422 means some IMOs were invalid - continue without failing
+                    st.info(f"ℹ️ Risk API: Some vessels in batch {batch_idx + 1} not found (status 422). PSC data unavailable for these vessels.")
                 else:
-                    st.warning(f"⚠️ Risk API returned status {response.status_code} for batch {batch_idx + 1}")
+                    st.warning(f"⚠️ Risk API returned status {response.status_code} for batch {batch_idx + 1}. PSC data unavailable for this batch.")
                 
                 # Update progress
                 progress_pct = int(((batch_idx + 1) / len(batches)) * 100)
@@ -1304,18 +1307,18 @@ if 'prev_quick_filter' not in st.session_state:
 if 'refresh_in_progress' not in st.session_state:
     st.session_state.refresh_in_progress = False
 
-quick_filter = st.sidebar.radio("Preset", ["All Vessels", "Dark Vessels", "Sanctioned Vessels", "Custom"], 
+quick_filter = st.sidebar.radio("Preset", ["All Vessels", "Sanctioned Vessels", "Dark Vessels", "Custom"], 
                                 index=0, horizontal=True, key="quick_filter_radio")
 
-if quick_filter == "Dark Vessels":
-    default_compliance = ["Severe (🔴)", "Warning (🟡)"]
-    default_sanctions = ["Dark Activity"]
-    default_types = ["All"]
-elif quick_filter == "Sanctioned Vessels":
+if quick_filter == "Sanctioned Vessels":
     default_compliance = ["Severe (🔴)", "Warning (🟡)"]
     default_sanctions = ["UN Sanctions", "OFAC Sanctions", "OFAC Non-SDN", "OFAC Advisory", 
                         "Flag Sanctioned", "Flag Hist Sanctioned"]
     default_types = ["All"]
+elif quick_filter == "Dark Vessels":
+    default_compliance = ["Severe (🔴)", "Warning (🟡)"]
+    default_sanctions = ["Dark Activity"]
+    default_types = ["Tanker", "Cargo"]
 else:  # All Vessels or Custom
     default_compliance = ["All"]
     default_sanctions = ["All"]
@@ -1450,6 +1453,13 @@ if stop_button:
 
 if not st.session_state.get('collection_in_progress', False):
     if refresh_button or auto_refresh_triggered:
+        # Show cached data first before starting collection
+        if 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
+            display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
+                               show_channels, show_fairways, selected_compliance, selected_sanctions, 
+                               selected_types, selected_nav_statuses)
+            displayed_in_this_run = True
+        
         st.session_state.collection_in_progress = True
         st.session_state.refresh_in_progress = True
         st.session_state.last_refresh_time = time.time()
