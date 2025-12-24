@@ -913,7 +913,7 @@ def apply_filters(df: pd.DataFrame, selected_compliance, selected_sanctions,
         compliance_map = {"Severe (🔴)": 2, "Warning (🟡)": 1, "Clear (🟢)": 0}
         selected_levels = [compliance_map[c] for c in selected_compliance if c in compliance_map]
         
-        if "No Data (⬜)" in selected_compliance:
+        if "Unknown (?)" in selected_compliance:
             if selected_levels:
                 filtered_df = filtered_df[filtered_df['legal_overall'].isin(selected_levels) | filtered_df['legal_overall'].isna()]
             else:
@@ -957,9 +957,9 @@ def apply_filters(df: pd.DataFrame, selected_compliance, selected_sanctions,
 
 def format_compliance_value(val) -> str:
     if val is None or (isinstance(val, (int, float)) and val < 0):
-        return ''
+        return '?'
     emoji_map = {2: "🔴", 1: "🟡", 0: "🟢"}
-    return emoji_map.get(val, '')
+    return emoji_map.get(val, '?')
 
 def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode: str, 
                        maritime_zones: Dict, show_anchorages: bool, show_channels: bool, 
@@ -983,7 +983,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
     cols[4].metric("🔴 Severe", severe_count)
     cols[5].metric("🟡 Warning", warning_count)
     cols[6].metric("🟢 Clear", clear_count)
-    cols[7].metric("⬜ No Data", unknown_count)
+    cols[7].metric("❓ Unknown", unknown_count)
     
     user_zoom = st.session_state.get('user_zoom', 10)
     
@@ -1300,7 +1300,7 @@ if st.session_state.prev_quick_filter != quick_filter and quick_filter != "Custo
         st.rerun()
 
 st.sidebar.subheader("Compliance")
-compliance_options = ["All", "Severe (🔴)", "Warning (🟡)", "Clear (🟢)", "No Data (⬜)"]
+compliance_options = ["All", "Severe (🔴)", "Warning (🟡)", "Clear (🟢)", "Unknown (?)"]
 selected_compliance = st.sidebar.multiselect("Legal Overall", compliance_options, 
                                              default=st.session_state.get('compliance_filter', default_compliance),
                                              key="compliance_filter")
