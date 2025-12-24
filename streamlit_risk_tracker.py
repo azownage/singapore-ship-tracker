@@ -805,9 +805,12 @@ def create_vessel_layers(df: pd.DataFrame, zoom: float = 10, display_mode: str =
         # Format last seen time
         last_seen_text = format_datetime(row['last_seen']) if row['last_seen'] else 'Unknown'
         
+        # Format IMO - show blank if 0
+        imo_display = row['imo'] if row['imo'] != '0' and row['imo'] != 0 else 'N/A'
+        
         tooltip_text = (
             f"<b>{row['name']}</b><br/>"
-            f"IMO: {row['imo']}<br/>MMSI: {row['mmsi']}<br/>"
+            f"IMO: {imo_display}<br/>MMSI: {row['mmsi']}<br/>"
             f"Type: {row['type_name']}<br/>Size: {dim_text}<br/>"
             f"Heading: {row['heading']:.0f}°<br/>Speed: {row['speed']:.1f} kts<br/>"
             f"Nav Status: {row['nav_status_name']}<br/>"
@@ -1112,9 +1115,12 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         display_df['flag_hist_display'] = display_df['flag_sanctioned_historical'].apply(format_compliance_value)
         display_df['security_display'] = display_df['security_legal_dispute'].apply(format_compliance_value)
         
+        # Replace IMO '0' with blank for display
+        display_df['imo_display'] = display_df['imo'].apply(lambda x: '' if x == '0' or x == 0 else str(x))
+        
         # Create table with display columns only
         table_df = display_df[[
-            'name', 'imo', 'mmsi', 'type_name', 'nav_status_name',
+            'name', 'imo_display', 'mmsi', 'type_name', 'nav_status_name',
             'sp_ship_type', 'sp_flag', 'sp_status',
             'legal_display', 'un_display', 'ofac_display', 'ofac_non_sdn_display',
             'ofac_advisory_display', 'port12m_display', 'dark_display', 'sts_display',
