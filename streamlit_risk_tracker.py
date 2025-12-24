@@ -838,15 +838,22 @@ def create_vessel_layers(df: pd.DataFrame, zoom: float = 10, display_mode: str =
                 length=v['length'], width=v['width'],
                 dim_a=v['dim_a'], dim_b=v['dim_b'], dim_c=v['dim_c'], dim_d=v['dim_d']
             )
+            # Calculate 3D height based on vessel length (larger vessels = taller)
+            # Scale: 50m vessel = 500m height, 300m vessel = 3000m height
+            elevation = v['length'] * 10  # 10x scaling for visibility
             vessel_polygons.append({
                 'polygon': polygon, 'name': v['name'], 
-                'tooltip': v['tooltip'], 'color': v['color']
+                'tooltip': v['tooltip'], 'color': v['color'],
+                'elevation': elevation
             })
         layers.append(pdk.Layer(
             'PolygonLayer', data=vessel_polygons,
             get_polygon='polygon', get_fill_color='color',
             get_line_color=[50, 50, 50, 100], line_width_min_pixels=1,
-            pickable=True, auto_highlight=True, extruded=False
+            pickable=True, auto_highlight=True, 
+            extruded=True,  # Enable 3D extrusion
+            get_elevation='elevation',  # Use calculated elevation
+            elevation_scale=1  # Scale multiplier
         ))
     return layers
 
@@ -1066,7 +1073,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
     layers.extend(vessel_layers)
     
     # Render map - use static key to maintain state across filter changes
-    view_state = pdk.ViewState(latitude=center_lat, longitude=center_lon, zoom=zoom, pitch=0)
+    view_state = pdk.ViewState(latitude=center_lat, longitude=center_lon, zoom=zoom, pitch=45)
     deck = pdk.Deck(
         map_style='https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
         initial_view_state=view_state, layers=layers,
@@ -1107,7 +1114,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
             'ofac_advisory_display', 'port12m_display', 'dark_display', 'sts_display',
             'flag_disp_display', 'flag_sanc_display', 'flag_hist_display', 'security_display',
             'psc_defects', 'psc_detentions'
-        ]].copy()
+        ]].copy().reset_index(drop=True)  # Reset index so iloc matches visual row numbers
         
         # Rename columns for display
         table_df.columns = [
@@ -1279,20 +1286,21 @@ coverage_bbox = coverage_options[selected_coverage]
 
 st.sidebar.subheader("⏱️ Vessel Expiry")
 expiry_options = {"30 minutes": 0.5, "1 hour": 1, "2 hours": 2, "4 hours": 4, "8 hours": 8, "12 hours": 12, "24 hours": 24, "Never (keep forever)": None}
-selected_expiry = st.sidebar.selectbox("Remove vessels not seen in:", list(expiry_options.keys()), index=0)
+selected_expiry = st.sidebar.selectbox("Remove vessels not seen in:", list(expiry_options.keys()), index=0, disabled=collection_active)
 vessel_expiry_hours = expiry_options[selected_expiry]
 
 st.sidebar.header("🗺️ Maritime Zones")
-show_anchorages = st.sidebar.checkbox("Show Anchorages", value=True)
-show_channels = st.sidebar.checkbox("Show Channels", value=True)
-show_fairways = st.sidebar.checkbox("Show Fairways", value=True)
+show_anchorages = st.sidebar.checkbox("Show Anchorages", value=True, disabled=collection_active)
+show_channels = st.sidebar.checkbox("Show Channels", value=True, disabled=collection_active)
+show_fairways = st.sidebar.checkbox("Show Fairways", value=True, disabled=collection_active)
 
 st.sidebar.header("🔍 Map View")
 
 vessel_display_mode = st.sidebar.radio(
     "Vessel Display Mode",
     options=["Dots", "Shapes"],
-    index=st.session_state.get('vessel_display_mode_index', 0)
+    index=st.session_state.get('vessel_display_mode_index', 0),
+    disabled=collection_active
 )
 st.session_state.vessel_display_mode_index = 0 if vessel_display_mode == "Dots" else 1
 
@@ -1348,7 +1356,7 @@ st.sidebar.subheader("Compliance")
 compliance_options = ["All", "Severe (🔴)", "Warning (🟡)", "Clear (🟢)"]
 selected_compliance = st.sidebar.multiselect("Legal Overall", compliance_options, 
                                              default=st.session_state.get('compliance_filter', default_compliance),
-                                             key="compliance_filter")
+                                             key="compliance_filter", disabled=collection_active)
 
 sanction_options = ["All", 
                     "UN Sanctions", "OFAC Sanctions", "OFAC Non-SDN", "OFAC Advisory",
@@ -1357,18 +1365,18 @@ sanction_options = ["All",
                     "Security/Legal Dispute"]
 selected_sanctions = st.sidebar.multiselect("Compliance Indicators (Severe/Warning)", sanction_options, 
                                             default=st.session_state.get('sanctions_filter', default_sanctions),
-                                            key="sanctions_filter")
+                                            key="sanctions_filter", disabled=collection_active)
 
 st.sidebar.subheader("Vessel Type")
 vessel_types = ["All", "Cargo", "Tanker", "Passenger", "Tug", "Fishing", "High Speed Craft", "Pilot", "SAR", "Port Tender", "Law Enforcement", "Other", "Unknown"]
 selected_types = st.sidebar.multiselect("Types", vessel_types, 
                                        default=st.session_state.get('types_filter', default_types),
-                                       key="types_filter")
+                                       key="types_filter", disabled=collection_active)
 
 st.sidebar.subheader("Navigation Status")
 nav_status_options = ["All"] + list(NAV_STATUS_NAMES.values())
 selected_nav_statuses = st.sidebar.multiselect("Status", nav_status_options, default=["All"],
-                                               key="nav_status_filter")
+                                               key="nav_status_filter", disabled=collection_active)
 
 st.sidebar.header("💾 Cache Statistics")
 vessel_count = len([k for k in st.session_state.get('vessel_positions', {}).keys() if k != '_last_update'])
@@ -1479,28 +1487,31 @@ if not st.session_state.get('collection_in_progress', False):
         
         st.rerun()
 else:
-    # Collection is in progress - show cached data AND collect in background
+    # Collection is in progress
     if st.session_state.get('refresh_in_progress', False):
-        # Show cached data WHILE collecting
+        # Show status message
+        status_placeholder.info("🔄 Data collection in progress... Please wait for completion before refreshing again.")
+        
+        # Show cached data WHILE collecting (users can filter this)
         if 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
             display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
                                show_channels, show_fairways, selected_compliance, selected_sanctions, 
                                selected_types, selected_nav_statuses)
             displayed_in_this_run = True
         
-        # Only collect new data if not already collecting
-        # This prevents filter changes from restarting collection
-        if 'collection_started' not in st.session_state:
-            st.session_state.collection_started = True
+        # Only start collection once - use a different flag to prevent restart
+        if not st.session_state.get('collection_executing', False):
+            st.session_state.collection_executing = True
             
-            # Now collect new data
+            # Run collection - this blocks for 60+ seconds
             update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_username, sp_password,
                           vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
                           show_channels, show_fairways, selected_compliance, selected_sanctions, 
                           selected_types, selected_nav_statuses, status_placeholder)
+            
             st.session_state.data_loaded = True
             st.session_state.refresh_in_progress = False
-            st.session_state.pop('collection_started', None)
+            st.session_state.collection_executing = False
             st.rerun()
     else:
         if 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
