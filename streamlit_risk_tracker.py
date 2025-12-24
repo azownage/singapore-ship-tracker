@@ -1334,7 +1334,7 @@ if 'refresh_in_progress' not in st.session_state:
     st.session_state.refresh_in_progress = False
 
 quick_filter = st.sidebar.radio("Preset", ["All Vessels", "Sanctioned Vessels", "Dark Vessels", "Custom"], 
-                                index=0, horizontal=True, key="quick_filter_radio")
+                                index=0, horizontal=True, key="quick_filter_radio", disabled=collection_active)
 
 if quick_filter == "Dark Vessels":
     default_compliance = ["Severe (🔴)", "Warning (🟡)"]
