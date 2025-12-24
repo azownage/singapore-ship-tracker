@@ -472,7 +472,9 @@ class SPShipsComplianceAPI:
             time.sleep(0.3)
             status_placeholder.empty()
         
-        return results
+        psc_cache.update(results)
+        
+        return {imo: psc_cache.get(imo, {}) for imo in imo_numbers}
 
 class AISTracker:
 
@@ -914,7 +916,7 @@ def apply_filters(df: pd.DataFrame, selected_compliance, selected_sanctions,
         compliance_map = {"Severe (🔴)": 2, "Warning (🟡)": 1, "Clear (🟢)": 0}
         selected_levels = [compliance_map[c] for c in selected_compliance if c in compliance_map]
         
-        if "Unknown (?)" in selected_compliance:
+        if "Unknown (❓)" in selected_compliance:
             if selected_levels:
                 filtered_df = filtered_df[filtered_df['legal_overall'].isin(selected_levels) | filtered_df['legal_overall'].isna()]
             else:
@@ -958,9 +960,9 @@ def apply_filters(df: pd.DataFrame, selected_compliance, selected_sanctions,
 
 def format_compliance_value(val) -> str:
     if val is None or (isinstance(val, (int, float)) and val < 0):
-        return '?'
+        return '❓'
     emoji_map = {2: "🔴", 1: "🟡", 0: "🟢"}
-    return emoji_map.get(val, '?')
+    return emoji_map.get(val, '❓')
 
 def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode: str, 
                        maritime_zones: Dict, show_anchorages: bool, show_channels: bool, 
@@ -1097,9 +1099,13 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
             if len(selected_indices) > 0:
                 idx = selected_indices[0]
                 selected_mmsi = display_df.iloc[idx]['mmsi']
-                st.session_state.selected_vessels = [selected_mmsi]
+                
+                if st.session_state.get('selected_vessels') != [selected_mmsi]:
+                    st.session_state.selected_vessels = [selected_mmsi]
+                    st.rerun()
         else:
-            st.session_state.selected_vessels = []
+            if st.session_state.get('selected_vessels'):
+                st.session_state.selected_vessels = []
 
 def display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, 
                        show_anchorages, show_channels, show_fairways, 
@@ -1301,7 +1307,7 @@ if st.session_state.prev_quick_filter != quick_filter and quick_filter != "Custo
         st.rerun()
 
 st.sidebar.subheader("Compliance")
-compliance_options = ["All", "Severe (🔴)", "Warning (🟡)", "Clear (🟢)", "Unknown (?)"]
+compliance_options = ["All", "Severe (🔴)", "Warning (🟡)", "Clear (🟢)", "Unknown (❓)"]
 selected_compliance = st.sidebar.multiselect("Legal Overall", compliance_options, 
                                              default=st.session_state.get('compliance_filter', default_compliance),
                                              key="compliance_filter")
