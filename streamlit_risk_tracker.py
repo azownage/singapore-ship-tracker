@@ -1344,7 +1344,7 @@ sanction_options = ["All",
                     "Port Call (12m)", "Dark Activity", "STS Non-Compliance",
                     "Flag Disputed", "Flag Sanctioned", "Flag Hist Sanctioned", 
                     "Security/Legal Dispute"]
-selected_sanctions = st.sidebar.multiselect("Compliance Indicators (Warning/Severe)", sanction_options, 
+selected_sanctions = st.sidebar.multiselect("Compliance Indicators (Severe/Warning)", sanction_options, 
                                             default=st.session_state.get('sanctions_filter', default_sanctions),
                                             key="sanctions_filter")
 
@@ -1363,13 +1363,13 @@ st.sidebar.header("💾 Cache Statistics")
 vessel_count = len([k for k in st.session_state.get('vessel_positions', {}).keys() if k != '_last_update'])
 last_update_fmt = format_datetime(st.session_state.get('last_data_update', 'Never'))
 
-st.sidebar.info(f"""**Cached Vessels:** {vessel_count}
+st.sidebar.info(f"**Cached:** {vessel_count} Vessels")
 
 **Static Data:** {len(st.session_state.ship_static_cache)} vessels
 
-**Compliance:** {len(st.session_state.risk_data_cache)} vessels
+**Compliance Data:** {len(st.session_state.risk_data_cache)} vessels
 
-**Risk:** {len(st.session_state.get('psc_risk_cache', {}))} vessels
+**Risk Data:** {len(st.session_state.get('psc_risk_cache', {}))} vessels
 
 **Last Update:** {last_update_fmt}""")
 
