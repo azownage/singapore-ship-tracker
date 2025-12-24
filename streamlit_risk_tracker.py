@@ -1,7 +1,7 @@
 """
 Singapore Ship Tracker with S&P Maritime Risk Intelligence
 Vessel tracking with compliance and risk indicators
-v10 - Multi-select checkboxes, PSC defects/detentions from Risk API
+v10.1 - Fixed: Auto-display cached data on load
 """
 
 import streamlit as st
@@ -191,6 +191,8 @@ if 'ship_static_cache' not in st.session_state:
     st.session_state.last_save = time.time()
     st.session_state.last_data_update = vessel_positions.get('_last_update', None)
     st.session_state.collection_in_progress = False
+    # NEW: Flag to track if initial display has been done
+    st.session_state.initial_load_complete = False
 
 if 'selected_vessels' not in st.session_state:
     st.session_state.selected_vessels = []
@@ -1164,6 +1166,20 @@ def display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones
     display_vessel_data(df, last_update, vessel_display_mode, maritime_zones, 
                        show_anchorages, show_channels, show_fairways, is_cached=True)
 
+def should_auto_display_cached_data() -> bool:
+    """Determine if cached data should be automatically displayed"""
+    # Display cached data if:
+    # 1. There is cached vessel position data
+    # 2. Not currently collecting new data
+    # 3. Haven't already displayed on initial load
+    has_cached_data = 'vessel_positions' in st.session_state and \
+                      st.session_state.vessel_positions and \
+                      len([k for k in st.session_state.vessel_positions.keys() if k != '_last_update']) > 0
+    
+    not_collecting = not st.session_state.get('collection_in_progress', False)
+    
+    return has_cached_data and not_collecting
+
 def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_username, sp_password,
                   vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
                   show_channels, show_fairways, selected_compliance, selected_sanctions, 
@@ -1476,6 +1492,7 @@ else:
                       selected_types, selected_nav_statuses, status_placeholder)
         st.session_state.data_loaded = True
         st.session_state.refresh_in_progress = False
+        st.session_state.initial_load_complete = True  # Mark as complete after refresh
         st.rerun()
     else:
         if 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
@@ -1489,11 +1506,16 @@ if st.session_state.get('show_details_imo') and sp_username and sp_password:
                             st.session_state.get('show_details_name', ''),
                             sp_username, sp_password)
 
-# Auto-display cached data on initial load or when filters change
+# ============= KEY FIX: Auto-display cached data on initial load =============
+# This is the critical addition that fixes your issue!
 if not displayed_in_this_run and not st.session_state.get('collection_in_progress', False):
-    if 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
+    if should_auto_display_cached_data() and not st.session_state.get('initial_load_complete', False):
+        # NEW: Automatically display cached data on first load
         display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
                            show_channels, show_fairways, selected_compliance, selected_sanctions, 
                            selected_types, selected_nav_statuses)
-    else:
+        st.session_state.initial_load_complete = True
+    elif not st.session_state.get('initial_load_complete', False):
+        # Only show this message on truly first load with no data
         status_placeholder.info("ℹ️ No cached vessel data. Click 'Refresh Now' to collect AIS data.")
+        st.session_state.initial_load_complete = True
