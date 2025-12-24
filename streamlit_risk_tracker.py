@@ -1469,13 +1469,7 @@ if stop_button:
 
 if not st.session_state.get('collection_in_progress', False):
     if refresh_button or auto_refresh_triggered:
-        # Show cached data first before starting collection
-        if 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
-            display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
-                               show_channels, show_fairways, selected_compliance, selected_sanctions, 
-                               selected_types, selected_nav_statuses)
-            displayed_in_this_run = True
-        
+        # Don't show cached data here - just start collection
         st.session_state.collection_in_progress = True
         st.session_state.refresh_in_progress = True
         st.session_state.last_refresh_time = time.time()
@@ -1492,9 +1486,12 @@ else:
                       selected_types, selected_nav_statuses, status_placeholder)
         st.session_state.data_loaded = True
         st.session_state.refresh_in_progress = False
+        st.session_state.collection_in_progress = False  # IMPORTANT: Clear this flag
         st.session_state.initial_load_complete = True  # Mark as complete after refresh
-        st.rerun()
+        displayed_in_this_run = True  # Mark that we displayed data
+        # Don't rerun here - let the display show
     else:
+        # Collection finished, show the cached data
         if 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
             display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
                                show_channels, show_fairways, selected_compliance, selected_sanctions, 
