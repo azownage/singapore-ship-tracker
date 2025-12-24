@@ -172,6 +172,7 @@ if 'ship_static_cache' not in st.session_state:
     ship_cache, risk_cache, mmsi_imo_cache, vessel_positions = load_cache()
     st.session_state.ship_static_cache = ship_cache
     st.session_state.risk_data_cache = risk_cache
+    st.session_state.psc_risk_cache = risk_cache
     st.session_state.mmsi_to_imo_cache = mmsi_imo_cache
     st.session_state.vessel_positions = vessel_positions
     st.session_state.last_save = time.time()
@@ -351,7 +352,7 @@ class SPShipsComplianceAPI:
                     }
             
             st.session_state.risk_data_cache = cache
-            save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
+            save_cache(st.session_state.ship_static_cache, st.session_state.get('psc_risk_cache', {}))
         except Exception as e:
             st.error(f"⚠️ S&P Ships API error: {str(e)}")
         # Don't clear the placeholder here - let it stay visible until new data is displayed
@@ -389,7 +390,7 @@ class SPShipsComplianceAPI:
                         compliance = self.parse_compliance_from_ship_detail(detail)
                         cache[imo] = compliance
                         st.session_state.risk_data_cache = cache
-                        save_cache(st.session_state.ship_static_cache, cache, mmsi_cache)
+                        save_cache(st.session_state.ship_static_cache, st.session_state.get('psc_risk_cache', {}), mmsi_cache)
                         return compliance
             
             time.sleep(0.1)
@@ -495,7 +496,7 @@ class AISTracker:
         positions_dict['_last_update'] = datetime.now(SGT).isoformat()
         st.session_state.vessel_positions = positions_dict
         st.session_state.last_data_update = positions_dict['_last_update']
-        save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache,
+        save_cache(st.session_state.ship_static_cache, st.session_state.get('psc_risk_cache', {}),
                   st.session_state.get('mmsi_to_imo_cache', {}), positions_dict)
     
     async def collect_data(self, duration: int = 30, api_key: str = "", bounding_box: List = None):
@@ -588,7 +589,7 @@ class AISTracker:
         self.ships[mmsi]['static_data'] = static_info
         st.session_state.ship_static_cache[str(mmsi)] = static_info
         if time.time() - st.session_state.last_save > 60:
-            save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
+            save_cache(st.session_state.ship_static_cache, st.session_state.get('psc_risk_cache', {}))
             st.session_state.last_save = time.time()
     
     def get_dataframe_with_compliance(self, sp_api: Optional[SPShipsComplianceAPI] = None, 
@@ -1187,7 +1188,7 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
     
     status_placeholder.empty()
     
-    save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache,
+    save_cache(st.session_state.ship_static_cache, st.session_state.get('psc_risk_cache', {}),
               st.session_state.get('mmsi_to_imo_cache', {}), st.session_state.get('vessel_positions', {}))
 
 # ============= STREAMLIT UI =============
@@ -1424,6 +1425,13 @@ if not st.session_state.get('collection_in_progress', False):
         st.session_state.refresh_in_progress = True
         st.session_state.last_refresh_time = time.time()
         status_placeholder.empty()
+        
+        if 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
+            display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
+                               show_channels, show_fairways, selected_compliance, selected_sanctions, 
+                               selected_types, selected_nav_statuses)
+            displayed_in_this_run = True
+        
         st.rerun()
 else:
     if st.session_state.get('refresh_in_progress', False):
@@ -1435,7 +1443,9 @@ else:
         st.session_state.refresh_in_progress = False
         st.session_state.collection_in_progress = False
         st.session_state.initial_load_complete = True
+        st.session_state.cache_just_updated = True
         displayed_in_this_run = True
+        st.rerun()
     else:
         if 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
             display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
@@ -1448,12 +1458,18 @@ if st.session_state.get('show_details_imo') and sp_username and sp_password:
                             st.session_state.get('show_details_name', ''),
                             sp_username, sp_password)
 
-if not displayed_in_this_run and not st.session_state.get('collection_in_progress', False):
-    if should_auto_display_cached_data() and not st.session_state.get('initial_load_complete', False):
+if not displayed_in_this_run:
+    if 'vessel_positions' in st.session_state and st.session_state.vessel_positions and st.session_state.get('data_loaded', False):
         display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
                            show_channels, show_fairways, selected_compliance, selected_sanctions, 
                            selected_types, selected_nav_statuses)
-        st.session_state.initial_load_complete = True
-    elif not st.session_state.get('initial_load_complete', False):
-        status_placeholder.info("ℹ️ No cached vessel data. Click 'Refresh Now' to collect AIS data.")
-        st.session_state.initial_load_complete = True
+        displayed_in_this_run = True
+    elif not st.session_state.get('collection_in_progress', False):
+        if should_auto_display_cached_data() and not st.session_state.get('initial_load_complete', False):
+            display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
+                               show_channels, show_fairways, selected_compliance, selected_sanctions, 
+                               selected_types, selected_nav_statuses)
+            st.session_state.initial_load_complete = True
+        elif not st.session_state.get('initial_load_complete', False):
+            status_placeholder.info("ℹ️ No cached vessel data. Click 'Refresh Now' to collect AIS data.")
+            st.session_state.initial_load_complete = True
