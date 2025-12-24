@@ -1365,11 +1365,11 @@ last_update_fmt = format_datetime(st.session_state.get('last_data_update', 'Neve
 
 st.sidebar.info(f"""**Cached Vessels:** {vessel_count}
 
-**Static Data:** {len(st.session_state.ship_static_cache)} vessels
+**Static:** {len(st.session_state.ship_static_cache)} vessels
 
-**Compliance Data:** {len(st.session_state.risk_data_cache)} vessels
+**Compliance:** {len(st.session_state.risk_data_cache)} vessels
 
-**Risk Data:** {len(st.session_state.get('psc_risk_cache', {}))} vessels
+**Risk:** {len(st.session_state.get('psc_risk_cache', {}))} vessels
 
 **Last Update:** {last_update_fmt}""")
 
