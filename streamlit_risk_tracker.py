@@ -1082,7 +1082,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
     layers.extend(vessel_layers)
     
     # Render map - use static key to maintain state across filter changes
-    view_state = pdk.ViewState(latitude=center_lat, longitude=center_lon, zoom=zoom, pitch=45)
+    view_state = pdk.ViewState(latitude=center_lat, longitude=center_lon, zoom=zoom, pitch=0)
     deck = pdk.Deck(
         map_style='https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
         initial_view_state=view_state, layers=layers,
