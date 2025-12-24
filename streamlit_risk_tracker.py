@@ -1254,8 +1254,8 @@ st.sidebar.header("📡 AIS Settings")
 
 collection_active = st.session_state.get('collection_in_progress', False) or st.session_state.get('sp_api_in_progress', False)
 
-duration = st.sidebar.slider("AIS collection time (seconds)", 10, 300, 60, disabled=collection_active)
-enable_compliance = st.sidebar.checkbox("Enable S&P compliance screening", value=True, disabled=collection_active)
+duration = st.sidebar.slider("AIS collection time (seconds)", 10, 300, 60)
+enable_compliance = st.sidebar.checkbox("Enable S&P compliance screening", value=True)
 
 # Refresh Now / Stop button in sidebar
 if not collection_active:
@@ -1478,8 +1478,16 @@ if not st.session_state.get('collection_in_progress', False):
         
         st.rerun()
 else:
-    # Collection is in progress - actually collect data on this rerun
+    # Collection is in progress - show cached data AND collect in background
     if st.session_state.get('refresh_in_progress', False):
+        # Show cached data WHILE collecting
+        if 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
+            display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
+                               show_channels, show_fairways, selected_compliance, selected_sanctions, 
+                               selected_types, selected_nav_statuses)
+            displayed_in_this_run = True
+        
+        # Now collect new data
         update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_username, sp_password,
                       vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
                       show_channels, show_fairways, selected_compliance, selected_sanctions, 
