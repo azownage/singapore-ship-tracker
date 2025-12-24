@@ -838,9 +838,16 @@ def create_vessel_layers(df: pd.DataFrame, zoom: float = 10, display_mode: str =
                 length=v['length'], width=v['width'],
                 dim_a=v['dim_a'], dim_b=v['dim_b'], dim_c=v['dim_c'], dim_d=v['dim_d']
             )
-            # Calculate 3D height based on vessel length (larger vessels = taller)
-            # Scale: 50m vessel = 500m height, 300m vessel = 3000m height
-            elevation = v['length'] * 10  # 10x scaling for visibility
+            # Calculate realistic 3D height based on actual vessel air draft (height above water)
+            # Typical cargo ships: 30-35m, Large container ships: 40-50m, Cruise ships: 60-75m
+            # Use vessel length as proxy: small (50m) = 20m tall, medium (150m) = 35m tall, large (300m+) = 50m tall
+            if v['length'] < 100:
+                elevation = 20  # Small vessels: ~20m air draft
+            elif v['length'] < 200:
+                elevation = 35  # Medium vessels: ~35m air draft
+            else:
+                elevation = 50  # Large vessels: ~50m air draft
+            
             vessel_polygons.append({
                 'polygon': polygon, 'name': v['name'], 
                 'tooltip': v['tooltip'], 'color': v['color'],
@@ -853,7 +860,7 @@ def create_vessel_layers(df: pd.DataFrame, zoom: float = 10, display_mode: str =
             pickable=True, auto_highlight=True, 
             extruded=True,  # Enable 3D extrusion
             get_elevation='elevation',  # Use calculated elevation
-            elevation_scale=1  # Scale multiplier
+            elevation_scale=50  # Scale multiplier for visibility (50x to make 20-50m visible on map)
         ))
     return layers
 
@@ -1489,9 +1496,6 @@ if not st.session_state.get('collection_in_progress', False):
 else:
     # Collection is in progress
     if st.session_state.get('refresh_in_progress', False):
-        # Show status message
-        status_placeholder.info("🔄 Data collection in progress... Please wait for completion before refreshing again.")
-        
         # Show cached data WHILE collecting (users can filter this)
         if 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
             display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
@@ -1503,7 +1507,7 @@ else:
         if not st.session_state.get('collection_executing', False):
             st.session_state.collection_executing = True
             
-            # Run collection - this blocks for 60+ seconds
+            # Run collection - progress messages from update_display will show
             update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_username, sp_password,
                           vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
                           show_channels, show_fairways, selected_compliance, selected_sanctions, 
