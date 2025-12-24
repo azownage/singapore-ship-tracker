@@ -998,17 +998,17 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
     
     # Always use stored map center if available (unless viewing specific vessels)
     if st.session_state.selected_vessels and len(df) > 0:
-        # Filter to show only selected vessels
+        # Zoom to selected vessel
         selected_df = df[df['mmsi'].isin(st.session_state.selected_vessels)]
         if len(selected_df) > 0:
-            # Center on first selected vessel
+            # Center on selected vessel with close zoom
             center_lat = selected_df.iloc[0]['latitude']
             center_lon = selected_df.iloc[0]['longitude']
-            zoom = max(user_zoom, 14)
-            # Update stored position when viewing specific vessels
+            zoom = 16  # Close zoom to clearly see vessel
+            # Update stored position when viewing specific vessel
             st.session_state.map_center = {"lat": center_lat, "lon": center_lon, "zoom": zoom}
         else:
-            # Vessels not in filtered results, use stored position
+            # Vessel not in filtered results, use stored position
             center_lat = st.session_state.map_center.get('lat', 1.28)
             center_lon = st.session_state.map_center.get('lon', 103.85)
             zoom = st.session_state.map_center.get('zoom', user_zoom)
@@ -1120,11 +1120,6 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
                 
                 # Store selected MMSI for zoom centering (but not filtering)
                 st.session_state.selected_vessels = [selected_mmsi]
-                
-                # Show info about selected vessel
-                vessel_name = table_df.iloc[idx]['Name']
-                vessel_imo = table_df.iloc[idx]['IMO']
-                st.info(f"🎯 Zoomed to: **{vessel_name}** (IMO: {vessel_imo}) | All vessels still visible on map")
         else:
             # No selection - clear stored selection
             st.session_state.selected_vessels = []
@@ -1302,8 +1297,9 @@ if quick_filter == "Dark Vessels":
     default_sanctions = ["Dark Activity"]
     default_types = ["Tanker", "Cargo"]
 elif quick_filter == "Sanctioned Vessels":
-    default_compliance = ["Severe (🔴)"]
-    default_sanctions = ["UN Sanctions", "OFAC Sanctions"]
+    default_compliance = ["Severe (🔴)", "Warning (🟡)"]
+    default_sanctions = ["UN Sanctions", "OFAC Sanctions", "OFAC Non-SDN", "OFAC Advisory", 
+                        "Flag Sanctioned", "Flag Hist Sanctioned"]
     default_types = ["All"]
 else:  # All Vessels or Custom
     default_compliance = ["All"]
@@ -1355,11 +1351,14 @@ st.sidebar.info(f"""**Cached Vessels:** {vessel_count}
 
 **Compliance:** {len(st.session_state.risk_data_cache)} vessels
 
+**Risk:** {len(st.session_state.get('psc_risk_cache', {}))} vessels
+
 **Last Update:** {last_update_fmt}""")
 
 if st.sidebar.button("🗑️ Clear All Cache"):
     st.session_state.ship_static_cache = {}
     st.session_state.risk_data_cache = {}
+    st.session_state.psc_risk_cache = {}
     st.session_state.mmsi_to_imo_cache = {}
     st.session_state.vessel_positions = {}
     st.session_state.last_data_update = None
