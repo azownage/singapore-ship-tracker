@@ -1365,7 +1365,7 @@ last_update_fmt = format_datetime(st.session_state.get('last_data_update', 'Neve
 
 st.sidebar.info(f"""**Cached Vessels:** {vessel_count}
 
-**Static:** {len(st.session_state.ship_static_cache)} vessels
+**Static Data:** {len(st.session_state.ship_static_cache)} vessels
 
 **Compliance:** {len(st.session_state.risk_data_cache)} vessels
 
