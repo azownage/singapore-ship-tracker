@@ -25,6 +25,7 @@ st.set_page_config(page_title="Singapore Ship Tracker", page_icon="🚢", layout
 SGT = timezone(timedelta(hours=8))
 STORAGE_FILE = "ship_data_cache.pkl"
 RISK_DATA_FILE = "risk_data_cache.pkl"
+PSC_RISK_FILE = "psc_risk_cache.pkl"
 MMSI_IMO_CACHE_FILE = "mmsi_imo_cache.pkl"
 VESSEL_POSITION_FILE = "vessel_positions_cache.pkl"
 
@@ -81,10 +82,10 @@ def get_vessel_type_category(type_code: int) -> str:
         return "Other"
     return "Other"
 
-def load_cache() -> Tuple[Dict, Dict, Dict, Dict]:
+def load_cache() -> Tuple[Dict, Dict, Dict, Dict, Dict]:
     """Load all cached data from disk"""
-    caches = [{}, {}, {}, {}]
-    files = [STORAGE_FILE, RISK_DATA_FILE, MMSI_IMO_CACHE_FILE, VESSEL_POSITION_FILE]
+    caches = [{}, {}, {}, {}, {}]
+    files = [STORAGE_FILE, RISK_DATA_FILE, PSC_RISK_FILE, MMSI_IMO_CACHE_FILE, VESSEL_POSITION_FILE]
     for i, file in enumerate(files):
         if os.path.exists(file):
             try:
@@ -94,13 +95,16 @@ def load_cache() -> Tuple[Dict, Dict, Dict, Dict]:
                 pass
     return tuple(caches)
 
-def save_cache(ship_cache: Dict, risk_cache: Dict, mmsi_imo_cache: Dict = None, vessel_positions: Dict = None):
+def save_cache(ship_cache: Dict, risk_cache: Dict, mmsi_imo_cache: Dict = None, vessel_positions: Dict = None, psc_risk_cache: Dict = None):
     """Save all caches to disk"""
     try:
         with open(STORAGE_FILE, 'wb') as f:
             pickle.dump(ship_cache, f)
         with open(RISK_DATA_FILE, 'wb') as f:
             pickle.dump(risk_cache, f)
+        if psc_risk_cache is not None:
+            with open(PSC_RISK_FILE, 'wb') as f:
+                pickle.dump(psc_risk_cache, f)
         if mmsi_imo_cache is not None:
             with open(MMSI_IMO_CACHE_FILE, 'wb') as f:
                 pickle.dump(mmsi_imo_cache, f)
@@ -183,9 +187,10 @@ def create_vessel_polygon(lat: float, lon: float, heading: float, length: float 
 
 # Initialize session state
 if 'ship_static_cache' not in st.session_state:
-    ship_cache, risk_cache, mmsi_imo_cache, vessel_positions = load_cache()
+    ship_cache, risk_cache, psc_risk_cache, mmsi_imo_cache, vessel_positions = load_cache()
     st.session_state.ship_static_cache = ship_cache
     st.session_state.risk_data_cache = risk_cache
+    st.session_state.psc_risk_cache = psc_risk_cache
     st.session_state.mmsi_to_imo_cache = mmsi_imo_cache
     st.session_state.vessel_positions = vessel_positions
     st.session_state.last_save = time.time()
@@ -374,7 +379,8 @@ class SPShipsComplianceAPI:
                     }
             
             st.session_state.risk_data_cache = cache
-            save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
+            save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache,
+                      None, None, st.session_state.get('psc_risk_cache', {}))
         except Exception as e:
             st.error(f"⚠️ S&P Ships API error: {str(e)}")
         # Don't clear the placeholder here - let it stay visible until new data is displayed
@@ -412,7 +418,8 @@ class SPShipsComplianceAPI:
                         compliance = self.parse_compliance_from_ship_detail(detail)
                         cache[imo] = compliance
                         st.session_state.risk_data_cache = cache
-                        save_cache(st.session_state.ship_static_cache, cache, mmsi_cache)
+                        save_cache(st.session_state.ship_static_cache, cache, mmsi_cache, None,
+                                  st.session_state.get('psc_risk_cache', {}))
                         return compliance
             
             time.sleep(0.1)
@@ -518,7 +525,8 @@ class AISTracker:
         st.session_state.vessel_positions = positions_dict
         st.session_state.last_data_update = positions_dict['_last_update']
         save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache,
-                  st.session_state.get('mmsi_to_imo_cache', {}), positions_dict)
+                  st.session_state.get('mmsi_to_imo_cache', {}), positions_dict,
+                  st.session_state.get('psc_risk_cache', {}))
     
     async def collect_data(self, duration: int = 30, api_key: str = "", bounding_box: List = None):
         """Collect AIS data from AISStream.io"""
@@ -610,7 +618,8 @@ class AISTracker:
         self.ships[mmsi]['static_data'] = static_info
         st.session_state.ship_static_cache[str(mmsi)] = static_info
         if time.time() - st.session_state.last_save > 60:
-            save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache)
+            save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache,
+                      None, None, st.session_state.get('psc_risk_cache', {}))
             st.session_state.last_save = time.time()
     
     def get_dataframe_with_compliance(self, sp_api: Optional[SPShipsComplianceAPI] = None, 
@@ -1222,7 +1231,8 @@ def update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_u
     status_placeholder.empty()
     
     save_cache(st.session_state.ship_static_cache, st.session_state.risk_data_cache,
-              st.session_state.get('mmsi_to_imo_cache', {}), st.session_state.get('vessel_positions', {}))
+              st.session_state.get('mmsi_to_imo_cache', {}), st.session_state.get('vessel_positions', {}),
+              st.session_state.get('psc_risk_cache', {}))
 
 # ============= STREAMLIT UI =============
 st.title("🚢 Singapore Ship Tracker")
@@ -1310,15 +1320,15 @@ if 'refresh_in_progress' not in st.session_state:
 quick_filter = st.sidebar.radio("Preset", ["All Vessels", "Sanctioned Vessels", "Dark Vessels", "Custom"], 
                                 index=0, horizontal=True, key="quick_filter_radio")
 
-if quick_filter == "Sanctioned Vessels":
+if quick_filter == "Dark Vessels":
+    default_compliance = ["Severe (🔴)", "Warning (🟡)"]
+    default_sanctions = ["Dark Activity"]
+    default_types = ["Tanker", "Cargo"]
+elif quick_filter == "Sanctioned Vessels":
     default_compliance = ["Severe (🔴)", "Warning (🟡)"]
     default_sanctions = ["UN Sanctions", "OFAC Sanctions", "OFAC Non-SDN", "OFAC Advisory", 
                         "Flag Sanctioned", "Flag Hist Sanctioned"]
     default_types = ["All"]
-elif quick_filter == "Dark Vessels":
-    default_compliance = ["Severe (🔴)", "Warning (🟡)"]
-    default_sanctions = ["Dark Activity"]
-    default_types = ["Tanker", "Cargo"]
 else:  # All Vessels or Custom
     default_compliance = ["All"]
     default_sanctions = ["All"]
@@ -1363,7 +1373,7 @@ st.sidebar.header("💾 Cache Statistics")
 vessel_count = len([k for k in st.session_state.get('vessel_positions', {}).keys() if k != '_last_update'])
 last_update_fmt = format_datetime(st.session_state.get('last_data_update', 'Never'))
 
-st.sidebar.info(f"""**Cached:** {vessel_count} vessels
+st.sidebar.info(f"""**Cached:** {vessel_count} Vessels
 
 **Static Data:** {len(st.session_state.ship_static_cache)} vessels
 
@@ -1380,7 +1390,7 @@ if st.sidebar.button("🗑️ Clear All Cache"):
     st.session_state.mmsi_to_imo_cache = {}
     st.session_state.vessel_positions = {}
     st.session_state.last_data_update = None
-    save_cache({}, {}, {}, {})
+    save_cache({}, {}, {}, {}, {})
     st.sidebar.success("Cache cleared!")
     st.rerun()
 
