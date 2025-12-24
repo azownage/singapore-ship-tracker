@@ -432,16 +432,26 @@ class SPShipsComplianceAPI:
         results = {}
         total_vessels = len(imo_numbers)
         
-        for i in range(0, len(imo_numbers), 100):
-            batch = imo_numbers[i:i+100]
+        # Check cache first
+        psc_cache = st.session_state.get('psc_risk_cache', {})
+        uncached_imos = [imo for imo in imo_numbers if imo not in psc_cache]
+        
+        if not uncached_imos:
+            if status_placeholder:
+                status_placeholder.info(f"🔍 Fetching risk indicators for {total_vessels} vessels... 100% (all cached)")
+                time.sleep(0.5)
+                status_placeholder.empty()
+            return {imo: psc_cache[imo] for imo in imo_numbers}
+        
+        if status_placeholder:
+            status_placeholder.info(f"🔍 Fetching risk indicators for {total_vessels} vessels ({len(uncached_imos)} new)... 0%")
+        
+        batches = [uncached_imos[i:i+100] for i in range(0, len(uncached_imos), 100)]
+        
+        for batch_idx, batch in enumerate(batches):
             imos_param = ','.join(batch)
             
             try:
-                # Show progress similar to compliance screening
-                if status_placeholder:
-                    progress_pct = int((i / total_vessels) * 100)
-                    status_placeholder.text(f"🔍 Fetching risk indicators for {total_vessels} vessels... {progress_pct}%")
-                
                 response = requests.get(
                     f"{risk_api_url}?imos={imos_param}",
                     auth=(self.username, self.password),
@@ -463,17 +473,21 @@ class SPShipsComplianceAPI:
                                 'risk_cached_at': datetime.now(SGT).isoformat()
                             }
                 else:
-                    st.warning(f"⚠️ Risk API returned status {response.status_code} for batch {i//100 + 1}")
+                    st.warning(f"⚠️ Risk API returned status {response.status_code} for batch {batch_idx + 1}")
+                
+                # Update progress
+                progress_pct = int(((batch_idx + 1) / len(batches)) * 100)
+                if status_placeholder:
+                    status_placeholder.info(f"🔍 Fetching risk indicators for {total_vessels} vessels ({len(uncached_imos)} new)... {progress_pct}%")
                 
                 time.sleep(0.2)  # Rate limiting
             
             except Exception as e:
-                st.warning(f"⚠️ Risk API error for batch {i//100 + 1}: {str(e)}")
+                st.warning(f"⚠️ Risk API error for batch {batch_idx + 1}: {str(e)}")
                 continue
         
         # Show completion
         if status_placeholder:
-            status_placeholder.text(f"🔍 Fetching risk indicators for {total_vessels} vessels... 100%")
             time.sleep(0.3)
             status_placeholder.empty()
         
@@ -1116,6 +1130,7 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
             selected_indices = selected_rows.selection.rows
             if len(selected_indices) > 0:
                 idx = selected_indices[0]
+                # Use display_df (original data) to get correct MMSI, not table_df (display names)
                 selected_mmsi = display_df.iloc[idx]['mmsi']
                 
                 # Store selected MMSI for zoom centering (but not filtering)
