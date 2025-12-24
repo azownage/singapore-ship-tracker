@@ -1142,8 +1142,9 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
             selected_indices = selected_rows.selection.rows
             if len(selected_indices) > 0:
                 idx = selected_indices[0]
-                # Use display_df (original data) to get correct MMSI, not table_df (display names)
-                selected_mmsi = display_df.iloc[idx]['mmsi']
+                # Get MMSI from table_df which is what user sees (after sorting/filtering)
+                # table_df has column 'MMSI' (renamed), so get it directly
+                selected_mmsi = table_df.iloc[idx]['MMSI']
                 
                 # Store selected MMSI for zoom centering (but not filtering)
                 st.session_state.selected_vessels = [selected_mmsi]
@@ -1487,14 +1488,20 @@ else:
                                selected_types, selected_nav_statuses)
             displayed_in_this_run = True
         
-        # Now collect new data
-        update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_username, sp_password,
-                      vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
-                      show_channels, show_fairways, selected_compliance, selected_sanctions, 
-                      selected_types, selected_nav_statuses, status_placeholder)
-        st.session_state.data_loaded = True
-        st.session_state.refresh_in_progress = False
-        st.rerun()
+        # Only collect new data if not already collecting
+        # This prevents filter changes from restarting collection
+        if 'collection_started' not in st.session_state:
+            st.session_state.collection_started = True
+            
+            # Now collect new data
+            update_display(duration, ais_api_key, coverage_bbox, enable_compliance, sp_username, sp_password,
+                          vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
+                          show_channels, show_fairways, selected_compliance, selected_sanctions, 
+                          selected_types, selected_nav_statuses, status_placeholder)
+            st.session_state.data_loaded = True
+            st.session_state.refresh_in_progress = False
+            st.session_state.pop('collection_started', None)
+            st.rerun()
     else:
         if 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
             display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
