@@ -1310,7 +1310,7 @@ quick_filter = st.sidebar.radio("Preset", ["All Vessels", "Dark Vessels", "Sanct
 if quick_filter == "Dark Vessels":
     default_compliance = ["Severe (🔴)", "Warning (🟡)"]
     default_sanctions = ["Dark Activity"]
-    default_types = ["Tanker", "Cargo"]
+    default_types = ["All"]
 elif quick_filter == "Sanctioned Vessels":
     default_compliance = ["Severe (🔴)", "Warning (🟡)"]
     default_sanctions = ["UN Sanctions", "OFAC Sanctions", "OFAC Non-SDN", "OFAC Advisory", 
