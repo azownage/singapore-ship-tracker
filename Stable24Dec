@@ -432,16 +432,26 @@ class SPShipsComplianceAPI:
         results = {}
         total_vessels = len(imo_numbers)
         
-        for i in range(0, len(imo_numbers), 100):
-            batch = imo_numbers[i:i+100]
+        # Check cache first
+        psc_cache = st.session_state.get('psc_risk_cache', {})
+        uncached_imos = [imo for imo in imo_numbers if imo not in psc_cache]
+        
+        if not uncached_imos:
+            if status_placeholder:
+                status_placeholder.info(f"🔍 Fetching risk indicators for {total_vessels} vessels... 100% (all cached)")
+                time.sleep(0.5)
+                status_placeholder.empty()
+            return {imo: psc_cache[imo] for imo in imo_numbers}
+        
+        if status_placeholder:
+            status_placeholder.info(f"🔍 Fetching risk indicators for {total_vessels} vessels ({len(uncached_imos)} new)... 0%")
+        
+        batches = [uncached_imos[i:i+100] for i in range(0, len(uncached_imos), 100)]
+        
+        for batch_idx, batch in enumerate(batches):
             imos_param = ','.join(batch)
             
             try:
-                # Show progress similar to compliance screening
-                if status_placeholder:
-                    progress_pct = int((i / total_vessels) * 100)
-                    status_placeholder.text(f"🔍 Fetching risk indicators for {total_vessels} vessels... {progress_pct}%")
-                
                 response = requests.get(
                     f"{risk_api_url}?imos={imos_param}",
                     auth=(self.username, self.password),
@@ -462,18 +472,25 @@ class SPShipsComplianceAPI:
                                 'psc_detentions': psc_det,
                                 'risk_cached_at': datetime.now(SGT).isoformat()
                             }
+                elif response.status_code == 422:
+                    # 422 means some IMOs were invalid - continue without failing
+                    st.info(f"ℹ️ Risk API: Some vessels in batch {batch_idx + 1} not found (status 422). PSC data unavailable for these vessels.")
                 else:
-                    st.warning(f"⚠️ Risk API returned status {response.status_code} for batch {i//100 + 1}")
+                    st.warning(f"⚠️ Risk API returned status {response.status_code} for batch {batch_idx + 1}. PSC data unavailable for this batch.")
+                
+                # Update progress
+                progress_pct = int(((batch_idx + 1) / len(batches)) * 100)
+                if status_placeholder:
+                    status_placeholder.info(f"🔍 Fetching risk indicators for {total_vessels} vessels ({len(uncached_imos)} new)... {progress_pct}%")
                 
                 time.sleep(0.2)  # Rate limiting
             
             except Exception as e:
-                st.warning(f"⚠️ Risk API error for batch {i//100 + 1}: {str(e)}")
+                st.warning(f"⚠️ Risk API error for batch {batch_idx + 1}: {str(e)}")
                 continue
         
         # Show completion
         if status_placeholder:
-            status_placeholder.text(f"🔍 Fetching risk indicators for {total_vessels} vessels... 100%")
             time.sleep(0.3)
             status_placeholder.empty()
         
@@ -998,17 +1015,17 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
     
     # Always use stored map center if available (unless viewing specific vessels)
     if st.session_state.selected_vessels and len(df) > 0:
-        # Filter to show only selected vessels
+        # Zoom to selected vessel
         selected_df = df[df['mmsi'].isin(st.session_state.selected_vessels)]
         if len(selected_df) > 0:
-            # Center on first selected vessel
+            # Center on selected vessel with close zoom
             center_lat = selected_df.iloc[0]['latitude']
             center_lon = selected_df.iloc[0]['longitude']
-            zoom = max(user_zoom, 14)
-            # Update stored position when viewing specific vessels
+            zoom = 16  # Close zoom to clearly see vessel
+            # Update stored position when viewing specific vessel
             st.session_state.map_center = {"lat": center_lat, "lon": center_lon, "zoom": zoom}
         else:
-            # Vessels not in filtered results, use stored position
+            # Vessel not in filtered results, use stored position
             center_lat = st.session_state.map_center.get('lat', 1.28)
             center_lon = st.session_state.map_center.get('lon', 103.85)
             zoom = st.session_state.map_center.get('zoom', user_zoom)
@@ -1018,10 +1035,8 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         center_lon = st.session_state.map_center.get('lon', 103.85)
         zoom = st.session_state.map_center.get('zoom', user_zoom)
     
-    # Filter dataframe for map display based on checkbox selection
+    # Filter dataframe for map display - ALWAYS show all vessels
     map_df = df.copy()
-    if st.session_state.selected_vessels:
-        map_df = map_df[map_df['mmsi'].isin(st.session_state.selected_vessels)]
     
     # Create map layers
     layers = []
@@ -1107,44 +1122,24 @@ def display_vessel_data(df: pd.DataFrame, last_update: str, vessel_display_mode:
         # Use stable key for dataframe to preserve selection across reruns
         table_key = "vessel_table_stable"
         
-        # Get currently selected vessels from session state
-        current_selection = st.session_state.get('selected_vessels', [])
-        
-        # Find row indices for currently selected vessels
-        default_rows = []
-        if current_selection:
-            for idx, row in display_df.iterrows():
-                if row['mmsi'] in current_selection:
-                    default_rows.append(idx)
-        
         selected_rows = st.dataframe(
             table_df, use_container_width=True, height=dynamic_height,
-            hide_index=True, on_select="rerun", selection_mode="multi-row",
+            hide_index=True, on_select="rerun", selection_mode="single-row",
             column_config=column_config, key=table_key
         )
         
-        # Handle multi-row selection - filter map to show only checked vessels
+        # Handle single-row selection - zoom to vessel but show all vessels on map
         if selected_rows and selected_rows.selection and selected_rows.selection.rows:
             selected_indices = selected_rows.selection.rows
-            selected_mmsis = [display_df.iloc[idx]['mmsi'] for idx in selected_indices]
-            
-            # Store selected MMSIs for map filtering
-            st.session_state.selected_vessels = selected_mmsis
-            
-            # Show info about selected vessels
-            num_selected = len(selected_indices)
-            if num_selected == 1:
+            if len(selected_indices) > 0:
                 idx = selected_indices[0]
-                st.info(f"✅ {num_selected} vessel selected & filtered on map: **{table_df.iloc[idx]['Name']}** (IMO: {table_df.iloc[idx]['IMO']})")
-            else:
-                vessel_names = [table_df.iloc[idx]['Name'] for idx in selected_indices[:3]]
-                if num_selected > 3:
-                    names_display = ", ".join(vessel_names) + f" and {num_selected - 3} more"
-                else:
-                    names_display = ", ".join(vessel_names)
-                st.info(f"✅ {num_selected} vessels selected & filtered on map: {names_display}")
+                # Use display_df (original data) to get correct MMSI, not table_df (display names)
+                selected_mmsi = display_df.iloc[idx]['mmsi']
+                
+                # Store selected MMSI for zoom centering (but not filtering)
+                st.session_state.selected_vessels = [selected_mmsi]
         else:
-            # No selection - clear filter
+            # No selection - clear stored selection
             st.session_state.selected_vessels = []
 
 def display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, 
@@ -1312,17 +1307,18 @@ if 'prev_quick_filter' not in st.session_state:
 if 'refresh_in_progress' not in st.session_state:
     st.session_state.refresh_in_progress = False
 
-quick_filter = st.sidebar.radio("Preset", ["All Vessels", "Dark Vessels", "Sanctioned Vessels", "Custom"], 
+quick_filter = st.sidebar.radio("Preset", ["All Vessels", "Sanctioned Vessels", "Dark Vessels", "Custom"], 
                                 index=0, horizontal=True, key="quick_filter_radio")
 
-if quick_filter == "Dark Vessels":
+if quick_filter == "Sanctioned Vessels":
+    default_compliance = ["Severe (🔴)", "Warning (🟡)"]
+    default_sanctions = ["UN Sanctions", "OFAC Sanctions", "OFAC Non-SDN", "OFAC Advisory", 
+                        "Flag Sanctioned", "Flag Hist Sanctioned"]
+    default_types = ["All"]
+elif quick_filter == "Dark Vessels":
     default_compliance = ["Severe (🔴)", "Warning (🟡)"]
     default_sanctions = ["Dark Activity"]
     default_types = ["Tanker", "Cargo"]
-elif quick_filter == "Sanctioned Vessels":
-    default_compliance = ["Severe (🔴)"]
-    default_sanctions = ["UN Sanctions", "OFAC Sanctions"]
-    default_types = ["All"]
 else:  # All Vessels or Custom
     default_compliance = ["All"]
     default_sanctions = ["All"]
@@ -1373,11 +1369,14 @@ st.sidebar.info(f"""**Cached Vessels:** {vessel_count}
 
 **Compliance:** {len(st.session_state.risk_data_cache)} vessels
 
+**Risk:** {len(st.session_state.get('psc_risk_cache', {}))} vessels
+
 **Last Update:** {last_update_fmt}""")
 
 if st.sidebar.button("🗑️ Clear All Cache"):
     st.session_state.ship_static_cache = {}
     st.session_state.risk_data_cache = {}
+    st.session_state.psc_risk_cache = {}
     st.session_state.mmsi_to_imo_cache = {}
     st.session_state.vessel_positions = {}
     st.session_state.last_data_update = None
@@ -1454,6 +1453,13 @@ if stop_button:
 
 if not st.session_state.get('collection_in_progress', False):
     if refresh_button or auto_refresh_triggered:
+        # Show cached data first before starting collection
+        if 'vessel_positions' in st.session_state and st.session_state.vessel_positions:
+            display_cached_data(vessel_expiry_hours, vessel_display_mode, maritime_zones, show_anchorages, 
+                               show_channels, show_fairways, selected_compliance, selected_sanctions, 
+                               selected_types, selected_nav_statuses)
+            displayed_in_this_run = True
+        
         st.session_state.collection_in_progress = True
         st.session_state.refresh_in_progress = True
         st.session_state.last_refresh_time = time.time()
